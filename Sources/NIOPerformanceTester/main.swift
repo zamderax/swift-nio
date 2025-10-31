@@ -31,8 +31,10 @@ import NIOHTTP1
 import NIOPosix
 import NIOWebSocket
 
+#if !os(Windows)
 // Use unbuffered stdout to help detect exactly which test was running in the event of a crash.
 setbuf(stdout, nil)
+#endif
 
 // MARK: Test Harness
 

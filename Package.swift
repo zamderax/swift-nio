@@ -17,7 +17,21 @@ import PackageDescription
 
 let swiftAtomics: PackageDescription.Target.Dependency = .product(name: "Atomics", package: "swift-atomics")
 let swiftCollections: PackageDescription.Target.Dependency = .product(name: "DequeModule", package: "swift-collections")
-let swiftSystem: PackageDescription.Target.Dependency = .product(name: "SystemPackage", package: "swift-system")
+let nonWindowsPlatforms: [Platform] = [.macOS, .iOS, .tvOS, .watchOS, .linux, .android]
+#if os(Windows)
+let swiftSystem: PackageDescription.Target.Dependency = .product(
+    name: "SystemPackage",
+    package: "swift-system"
+)
+let isWindows = true
+#else
+let swiftSystem: PackageDescription.Target.Dependency = .product(
+    name: "SystemPackage",
+    package: "swift-system",
+    condition: .when(platforms: nonWindowsPlatforms)
+)
+let isWindows = false
+#endif
 
 // These platforms require a dependency on `NIOPosix` from `NIOHTTP1` to maintain backward
 // compatibility with previous NIO versions.
@@ -34,7 +48,7 @@ let includePrivacyManifest = true
 let includePrivacyManifest = false
 #endif
 
-let package = Package(
+var package = Package(
     name: "swift-nio",
     products: [
         .library(name: "NIOCore", targets: ["NIOCore"]),
@@ -606,18 +620,78 @@ let package = Package(
     ]
 )
 
+if isWindows {
+    let targetsToOmit: Set<String> = [
+        "_NIOFileSystem",
+        "_NIOFileSystemFoundationCompat",
+        "NIOFS",
+        "NIOFSFoundationCompat",
+        "NIOFileSystem",
+        "NIOPerformanceTester",
+        "NIOCrashTester",
+        "NIOFSTests",
+        "NIOFSIntegrationTests",
+        "NIOFSFoundationCompatTests",
+    ]
+
+    package.targets.removeAll { target in targetsToOmit.contains(target.name) }
+
+    package.targets += [
+        .target(
+            name: "_NIOFileSystem",
+            path: "Sources/_NIOFileSystemWindows"
+        ),
+        .target(
+            name: "_NIOFileSystemFoundationCompat",
+            dependencies: [
+                "_NIOFileSystem"
+            ],
+            path: "Sources/_NIOFileSystemFoundationCompatWindows"
+        ),
+        .target(
+            name: "NIOFS",
+            dependencies: [
+                "NIOCore",
+                "NIOPosix",
+                "_NIOFileSystem"
+            ],
+            path: "Sources/NIOFSWindows"
+        ),
+        .target(
+            name: "NIOFSFoundationCompat",
+            dependencies: [
+                "NIOFS"
+            ],
+            path: "Sources/NIOFSFoundationCompatWindows"
+        ),
+        .target(
+            name: "NIOFileSystem",
+            dependencies: [
+                "_NIOFileSystem"
+            ],
+            path: "Sources/NIOFileSystemWindows"
+        ),
+    ]
+}
+
 if Context.environment["SWIFTCI_USE_LOCAL_DEPS"] == nil {
-    package.dependencies += [
+    var dependencies: [Package.Dependency] = [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.1.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
-        .package(url: "https://github.com/apple/swift-system.git", from: "1.4.0"),
     ]
+    if !isWindows {
+        dependencies.append(.package(url: "https://github.com/apple/swift-system.git", from: "1.4.0"))
+    }
+    package.dependencies += dependencies
 } else {
-    package.dependencies += [
+    var dependencies: [Package.Dependency] = [
         .package(path: "../swift-atomics"),
         .package(path: "../swift-collections"),
-        .package(path: "../swift-system"),
     ]
+    if !isWindows {
+        dependencies.append(.package(path: "../swift-system"))
+    }
+    package.dependencies += dependencies
 }
 
 // ---    STANDARD CROSS-REPO SETTINGS DO NOT EDIT   --- //

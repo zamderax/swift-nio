@@ -22,9 +22,21 @@ import ucrt
 /// grow additional platform checks.
 
 /// Standard POSIX-style file descriptor numbers used by example code and tests.
-public let STDIN_FILENO: CInt = 0
-public let STDOUT_FILENO: CInt = 1
-public let STDERR_FILENO: CInt = 2
+internal let STDIN_FILENO: CInt = 0
+internal let STDOUT_FILENO: CInt = 1
+internal let STDERR_FILENO: CInt = 2
+
+/// Public accessors for POSIX-style descriptors that remain internal to the module.
+public enum NIOStandardStreamDescriptor {
+    /// File descriptor corresponding to standard input.
+    public static var stdin: CInt { STDIN_FILENO }
+
+    /// File descriptor corresponding to standard output.
+    public static var stdout: CInt { STDOUT_FILENO }
+
+    /// File descriptor corresponding to standard error.
+    public static var stderr: CInt { STDERR_FILENO }
+}
 
 /// Windows-compatible implementation of `setenv(3)` that mirrors the common
 /// POSIX semantics used within SwiftNIO.  Internally this delegates to

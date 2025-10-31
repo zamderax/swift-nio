@@ -1,3 +1,4 @@
+#if !os(Windows)
 // snippet.hide
 
 import NIOCore
@@ -101,3 +102,4 @@ func main() async throws {
     }
     // snippet.end
 }
+#endif

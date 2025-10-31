@@ -100,7 +100,7 @@ final class NIOThread: Sendable {
 
     static var currentThreadID: UInt {
         #if os(Windows)
-        UInt(bitPattern: .init(bitPattern: ThreadOpsSystem.currentThread))
+        ThreadOpsSystem.currentThread.bitPattern
         #else
         UInt(bitPattern: .init(bitPattern: ThreadOpsSystem.currentThread.handle))
         #endif

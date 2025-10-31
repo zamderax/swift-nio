@@ -664,7 +664,14 @@ let channel = try { () -> Channel in
     case .unixDomainSocket(let path):
         return try socketBootstrap.bind(unixDomainSocketPath: path).wait()
     case .stdio:
-        return try pipeBootstrap.takingOwnershipOfDescriptors(input: STDIN_FILENO, output: STDOUT_FILENO).wait()
+        #if os(Windows)
+        let standardIn = NIOStandardStreamDescriptor.stdin
+        let standardOut = NIOStandardStreamDescriptor.stdout
+        #else
+        let standardIn = STDIN_FILENO
+        let standardOut = STDOUT_FILENO
+        #endif
+        return try pipeBootstrap.takingOwnershipOfDescriptors(input: standardIn, output: standardOut).wait()
     }
 }()
 

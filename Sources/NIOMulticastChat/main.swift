@@ -11,7 +11,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if canImport(CNIOLinux)
 import CNIOLinux
+#endif
+#if os(Windows)
+import WinSDK
+#endif
 import NIOCore
 import NIOPosix
 
