@@ -639,6 +639,9 @@ if isWindows {
     package.targets += [
         .target(
             name: "_NIOFileSystem",
+            dependencies: [
+                swiftSystem
+            ],
             path: "Sources/_NIOFileSystemWindows"
         ),
         .target(
@@ -678,19 +681,15 @@ if Context.environment["SWIFTCI_USE_LOCAL_DEPS"] == nil {
     var dependencies: [Package.Dependency] = [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.1.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
+        .package(url: "https://github.com/apple/swift-system.git", from: "1.4.0"),
     ]
-    if !isWindows {
-        dependencies.append(.package(url: "https://github.com/apple/swift-system.git", from: "1.4.0"))
-    }
     package.dependencies += dependencies
 } else {
     var dependencies: [Package.Dependency] = [
         .package(path: "../swift-atomics"),
         .package(path: "../swift-collections"),
+        .package(path: "../swift-system"),
     ]
-    if !isWindows {
-        dependencies.append(.package(path: "../swift-system"))
-    }
     package.dependencies += dependencies
 }
 

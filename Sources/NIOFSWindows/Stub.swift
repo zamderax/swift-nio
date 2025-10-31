@@ -8,7 +8,7 @@ import NIOPosix
 public enum FileSystemSupport {
     /// Helper to surface a consistent unsupported error.
     public static func unsupportedError(function: StaticString = #function) -> FileSystemError {
-        .unsupported("\(function) is not available on Windows yet.")
+        FileSystemError.unsupported("\(function) is not available on Windows yet.")
     }
 }
 
