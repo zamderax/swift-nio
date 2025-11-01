@@ -1,0 +1,24 @@
+# NIOPosixTests Windows Port Checklist
+
+- [ ] AsyncChannelBootstrapTests.swift
+  - [ ] Enable host/port async TCP bootstrap tests on Windows (requires verifying existing codepath)
+  - [ ] Port datagram async bootstrap tests (address/receive path differences)
+  - [ ] Implement pipe-based async bootstrap helpers or provide Windows equivalent
+  - [ ] Replace raw-socket async bootstrap tests with Winsock path or skip with targeted guard
+  - [ ] Add Windows-safe vsock coverage or skip explicitly
+- [ ] BootstrapTest.swift
+- [ ] ChannelPipelineTest.swift
+- [ ] ChannelTests.swift
+- [ ] ControlMessageTests.swift
+- [ ] DatagramChannelTests.swift
+- [ ] EventLoopTest.swift
+- [ ] FileRegionTest.swift
+- [ ] HappyEyeballsTest.swift
+- [ ] NIOFileHandleTest.swift
+- [ ] PipeChannelTest.swift
+- [ ] RawSocketBootstrapTests.swift
+- [ ] SelectorTest.swift
+- [ ] SocketAddressTest.swift
+- [ ] SocketChannelTest.swift
+- [ ] StreamChannelsTest.swift
+- [ ] SystemTest.swift
