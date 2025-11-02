@@ -18,6 +18,10 @@ import NIOEmbedded
 import NIOTestUtils
 import XCTest
 
+#if os(Windows)
+import WinSDK
+#endif
+
 @testable import NIOCore
 @testable import NIOPosix
 
@@ -26,22 +30,21 @@ import CNIOLinux
 #endif
 
 #if os(Windows)
-import WinSDK
-
 private func windowsSupportsSocketTimestamp() -> Bool {
     do {
         let socket = try Socket(protocolFamily: .inet, type: .stream, setNonBlocking: false)
         defer { try? socket.close() }
         return try socket.withUnsafeHandle { fd in
-            var flag: CInt = 1
-            return try withUnsafePointer(to: &flag) { pointer in
+            let flag: CInt = 1
+            let flagSize = WinSDK.socklen_t(MemoryLayout<CInt>.size)
+            return try withUnsafePointer(to: flag) { pointer in
                 do {
                     try NIOBSDSocket.setsockopt(
                         socket: fd,
                         level: .socket,
                         option_name: .so_timestamp,
-                        option_value: pointer,
-                        option_len: socklen_t(MemoryLayout.size(ofValue: flag))
+                        option_value: UnsafeRawPointer(pointer),
+                        option_len: flagSize
                     )
                     return true
                 } catch let error as IOError {
@@ -3687,7 +3690,25 @@ final class ReentrantWritabilityChangingHandler: ChannelInboundHandler {
     }
 }
 
-#if !os(Windows)
+#if os(Windows)
+private func veryNasty_blockUntilReadBufferIsNonEmpty(channel: Channel) throws {
+    struct ThisIsNotASocketChannelError: Error {}
+    guard let channel = channel as? SocketChannel else {
+        throw ThisIsNotASocketChannelError()
+    }
+    try channel.socket.withUnsafeHandle { fd in
+        var pollFd = WSAPOLLFD(
+            fd: fd,
+            events: WinSDK.SHORT(WinSDK.POLLIN),
+            revents: 0
+        )
+        let result = withUnsafeMutablePointer(to: &pollFd) { pointer in
+            WinSDK.WSAPoll(pointer, 1, -1)
+        }
+        XCTAssertEqual(1, result)
+    }
+}
+#elseif !os(WASI)
 private func veryNasty_blockUntilReadBufferIsNonEmpty(channel: Channel) throws {
     struct ThisIsNotASocketChannelError: Error {}
     guard let channel = channel as? SocketChannel else {

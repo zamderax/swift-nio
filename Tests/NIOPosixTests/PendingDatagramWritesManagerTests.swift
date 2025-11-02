@@ -1,14 +1,4 @@
-#if os(Windows)
-import XCTest
-
-@testable import NIOPosix
-
-final class PendingDatagramWritesManagerTests: XCTestCase {
-    func testPendingDatagramWritesUnsupportedOnWindows() throws {
-        throw XCTSkip("Pending datagram writes tests are unsupported on Windows")
-    }
-}
-#else//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -22,8 +12,13 @@ final class PendingDatagramWritesManagerTests: XCTestCase {
 //
 //===----------------------------------------------------------------------===//
 
+#if os(Windows)
+import CNIOWindows
+import WinSDK
+#else
 import CNIODarwin
 import CNIOLinux
+#endif
 import NIOEmbedded
 import XCTest
 
@@ -36,7 +31,11 @@ extension SocketAddress {
 
         switch NIOBSDSocket.AddressFamily(rawValue: CInt(addr.pointee.sa_family)) {
         case .unix:
+#if os(Windows)
+            fatalError("Unix domain sockets are unsupported for datagrams on Windows")
+#else
             self = SocketAddress(erased.load(as: sockaddr_un.self))
+#endif
         case .inet:
             self = SocketAddress(erased.load(as: sockaddr_in.self))
         case .inet6:
@@ -46,17 +45,27 @@ extension SocketAddress {
         }
     }
 
-    fileprivate var expectedSize: socklen_t {
+    fileprivate var expectedSize: PlatformSocklenT {
         switch self {
         case .v4:
-            return socklen_t(MemoryLayout<sockaddr_in>.size)
+            return PlatformSocklenT(MemoryLayout<sockaddr_in>.size)
         case .v6:
-            return socklen_t(MemoryLayout<sockaddr_in6>.size)
+            return PlatformSocklenT(MemoryLayout<sockaddr_in6>.size)
         case .unixDomainSocket:
+#if os(Windows)
+            fatalError("Unix domain sockets are unsupported for datagrams on Windows")
+#else
             return socklen_t(MemoryLayout<sockaddr_un>.size)
+#endif
         }
     }
 }
+
+#if os(Windows)
+private typealias PlatformSocklenT = WinSDK.socklen_t
+#else
+private typealias PlatformSocklenT = socklen_t
+#endif
 
 class PendingDatagramWritesManagerTests: XCTestCase {
     private func withPendingDatagramWritesManager(_ body: (PendingDatagramWritesManager) throws -> Void) rethrows {
@@ -188,8 +197,10 @@ class PendingDatagramWritesManagerTests: XCTestCase {
                             )
                             XCTAssertEqual(
                                 expected[multiState].map { $0.1 },
-                                ptrs.map { SocketAddress($0.msg_hdr.msg_name.assumingMemoryBound(to: sockaddr.self)) },
-                                "in vector write \(multiState) (overall \(everythingState)), \(expected[multiState].map { $0.1 }) addresses expected but \(ptrs.map { SocketAddress($0.msg_hdr.msg_name.assumingMemoryBound(to: sockaddr.self)) }) actual",
+                                ptrs.map {
+                                    SocketAddress($0.msg_hdr.msg_name!.assumingMemoryBound(to: sockaddr.self))
+                                },
+                                "in vector write \(multiState) (overall \(everythingState)), \(expected[multiState].map { $0.1 }) addresses expected but \(ptrs.map { SocketAddress($0.msg_hdr.msg_name!.assumingMemoryBound(to: sockaddr.self)) }) actual",
                                 file: (file),
                                 line: line
                             )
@@ -860,6 +871,3 @@ class PendingDatagramWritesManagerTests: XCTestCase {
         }
     }
 }
-
-#endif
-

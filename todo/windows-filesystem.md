@@ -18,12 +18,12 @@
 - [x] Implement `.socketOption` coverage to un-skip `Tests/NIOPosixTests/SocketOptionProviderTest.swift:8`.
 
 ## Datagram & Multicast Support
-- [ ] Implement pending datagram write coalescing (`Tests/NIOPosixTests/PendingDatagramWritesManagerTests.swift:8`).
-- [ ] Provide multicast membership/option support so `Tests/NIOPosixTests/MulticastTest.swift:8` can run.
+- [x] Implement pending datagram write coalescing (`Tests/NIOPosixTests/PendingDatagramWritesManagerTests.swift:8`).
+- [x] Provide multicast membership/option support so `Tests/NIOPosixTests/MulticastTest.swift:8` can run.
 
 ## Pipe & Descriptor Utilities
-- [ ] Extend `NIOPipeBootstrap` to accept single descriptor socketpairs on Windows (`Tests/NIOPosixTests/PipeChannelTest.swift:275`).
-- [ ] Add Windows-friendly UNIX-domain path helpers and selector coverage to replace skips in `Tests/NIOPosixTests/TestUtils.swift:196` and `SelectorTest.swift:8`.
+- [x] Extend `NIOPipeBootstrap` to accept single descriptor socketpairs on Windows (`Tests/NIOPosixTests/PipeChannelTest.swift:275`).
+- [x] Add Windows-friendly UNIX-domain path helpers and selector coverage to replace skips in `Tests/NIOPosixTests/TestUtils.swift:196` and `SelectorTest.swift:8`.
 
 ## Higher-Level Networking Features
 - [ ] Implement the remaining Happy Eyeballs networking pieces required by `Tests/NIOPosixTests/HappyEyeballsTest.swift:6`.

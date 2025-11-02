@@ -20,15 +20,43 @@ import XCTest
 @testable import NIOPosix
 
 #if os(Windows)
+import WinSDK
+#endif
 
-class SelectorTest: XCTestCase {
-    func testSelectorUnsupportedOnWindows() throws {
-        throw XCTSkip("Selector-based tests rely on POSIX-specific behavior and are unsupported on Windows")
-    }
+#if os(Windows)
+private func makeTestThread() -> NIOThread {
+    NIOThread(handle: WindowsThreadHandle(GetCurrentThread()), desiredName: nil)
 }
 
-#else
+private func makeStreamSocketPair() throws -> (NIOBSDSocket.Handle, NIOBSDSocket.Handle) {
+    try NIOPipeBootstrap.makePipeDescriptorPair()
+}
 
+private func closeSocket(_ fd: NIOBSDSocket.Handle) {
+    _ = WinSDK.closesocket(fd)
+}
+#else
+private func makeTestThread() -> NIOThread {
+    NIOThread(handle: .init(handle: pthread_self()), desiredName: nil)
+}
+
+private func makeStreamSocketPair() throws -> (NIOBSDSocket.Handle, NIOBSDSocket.Handle) {
+    var socketPair: [CInt] = [-1, -1]
+    try socketPair.withUnsafeMutableBufferPointer { pointer in
+        precondition(pointer.count == 2)
+        try Posix.socketpair(
+            domain: .local,
+            type: .stream,
+            protocolSubtype: .default,
+            socketVector: pointer.baseAddress
+        )
+    }
+    return (socketPair[0], socketPair[1])
+}
+
+private func closeSocket(_ fd: NIOBSDSocket.Handle) {
+    try? Posix.close(descriptor: fd)
+}
 class SelectorTest: XCTestCase {
 
     func testDeregisterWhileProcessingEvents() throws {
@@ -47,7 +75,7 @@ class SelectorTest: XCTestCase {
             var registrationID: SelectorRegistrationID
         }
 
-        let thread = NIOThread(handle: .init(handle: pthread_self()), desiredName: nil)
+        let thread = makeTestThread()
         let selector = try NIOPosix.Selector<TestRegistration>(thread: thread)
         defer {
             XCTAssertNoThrow(try selector.close())
@@ -450,15 +478,7 @@ class SelectorTest: XCTestCase {
                 try super.close()
             }
         }
-        var socketFDs: [CInt] = [-1, -1]
-        XCTAssertNoThrow(
-            try Posix.socketpair(
-                domain: .local,
-                type: .stream,
-                protocolSubtype: .default,
-                socketVector: &socketFDs
-            )
-        )
+        let (channelSocket, peerSocket) = try makeStreamSocketPair()
 
         let numberFires = ManagedAtomic(0)
         let el = group.next() as! SelectableEventLoop
@@ -466,7 +486,7 @@ class SelectorTest: XCTestCase {
         let channel = try SocketChannel(
             socket: FakeSocket(
                 hasBeenClosedPromise: channelHasBeenClosedPromise,
-                socket: socketFDs[0]
+                socket: channelSocket
             ),
             eventLoop: el
         )
@@ -499,7 +519,7 @@ class SelectorTest: XCTestCase {
             // EL tick 2: this is used to
             //   - close one end of the socketpair so that in EL tick 3, we'll see a EPOLLHUP
             //   - sleep `delayToUseInMicroSeconds + 10` so in EL tick 3, we'll also see timerfd fire
-            close(socketFDs[1])
+            closeSocket(peerSocket)
             usleep(.init(delayToUseInMicroSeconds))
         }
 

@@ -193,7 +193,18 @@ func withTemporaryUnixDomainSocketPathName<T>(
     directory: String = temporaryDirectory,
     _ body: (String) throws -> T
 ) throws -> T {
-    throw XCTSkip("UNIX domain socket path helpers are unsupported on Windows")
+    let baseURL = URL(fileURLWithPath: directory)
+    let candidatePath = baseURL.appendingPathComponent("nio-uds-\(UUID().uuidString)").path
+    if candidatePath.utf8.count <= 103 {
+        return try body(candidatePath)
+    }
+
+    let fallback = "\\\\?\\pipe\\nio-uds-\(UUID().uuidString)"
+    precondition(
+        fallback.utf8.count <= 103,
+        "generated fallback path exceeds UNIX domain socket limit: \(fallback)"
+    )
+    return try body(fallback)
 }
 #else
 func withTemporaryUnixDomainSocketPathName<T>(

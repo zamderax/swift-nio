@@ -1,14 +1,4 @@
-#if os(Windows)
-import XCTest
-
-@testable import NIOPosix
-
-final class MulticastTest: XCTestCase {
-    func testMulticastUnsupportedOnWindows() throws {
-        throw XCTSkip("Multicast tests are unsupported on Windows")
-    }
-}
-#else//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -21,7 +11,12 @@ final class MulticastTest: XCTestCase {
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if os(Windows)
+import CNIOWindows
+#endif
+#if os(Linux) || os(Android)
 import CNIOLinux
+#endif
 import NIOCore
 import NIOPosix
 import XCTest
@@ -60,11 +55,15 @@ final class MulticastTest: XCTestCase {
 
     @available(*, deprecated)
     private func interfaceForAddress(address: String) throws -> NIONetworkInterface {
+#if os(Windows)
+        throw XCTSkip("Network interface enumeration is unavailable on Windows")
+#else
         let targetAddress = try SocketAddress(ipAddress: address, port: 0)
         guard let interface = try System.enumerateInterfaces().lazy.filter({ $0.address == targetAddress }).first else {
             throw NoSuchInterfaceError()
         }
         return interface
+#endif
     }
 
     private func deviceForAddress(address: String) throws -> NIONetworkDevice {
@@ -75,6 +74,7 @@ final class MulticastTest: XCTestCase {
         return device
     }
 
+    #if !os(Windows)
     @available(*, deprecated)
     private func bindMulticastChannel(
         host: String,
@@ -110,6 +110,7 @@ final class MulticastTest: XCTestCase {
                 }
             }
     }
+    #endif
 
     private func bindMulticastChannel(
         host: String,
@@ -183,6 +184,7 @@ final class MulticastTest: XCTestCase {
         }
     }
 
+    #if !os(Windows)
     @available(*, deprecated)
     private func leaveMulticastGroup(
         channel: Channel,
@@ -198,6 +200,7 @@ final class MulticastTest: XCTestCase {
             return channel.eventLoop.makeFailedFuture(error)
         }
     }
+    #endif
 
     private func leaveMulticastGroup(
         channel: Channel,
@@ -278,6 +281,9 @@ final class MulticastTest: XCTestCase {
 
     @available(*, deprecated)
     func testCanJoinBasicMulticastGroupIPv4() throws {
+#if os(Windows)
+        throw XCTSkip("NIONetworkInterface APIs are unavailable on Windows")
+#else
         let multicastInterface = try assertNoThrowWithValue(self.interfaceForAddress(address: "127.0.0.1"))
         guard multicastInterface.multicastSupported else {
             // alas, we don't support multicast, let's skip but test the right error is thrown
@@ -320,7 +326,6 @@ final class MulticastTest: XCTestCase {
             }
             return
         }
-
         defer {
             XCTAssertNoThrow(try listenerChannel.close().wait())
         }
@@ -346,10 +351,14 @@ final class MulticastTest: XCTestCase {
             sender: sender,
             multicastAddress: multicastAddress
         )
+#endif
     }
 
     @available(*, deprecated)
     func testCanJoinBasicMulticastGroupIPv6() throws {
+#if os(Windows)
+        throw XCTSkip("NIONetworkInterface APIs are unavailable on Windows")
+#else
         guard System.supportsIPv6 else {
             // Skip on non-IPv6 systems
             return
@@ -421,10 +430,14 @@ final class MulticastTest: XCTestCase {
             sender: sender,
             multicastAddress: multicastAddress
         )
+#endif
     }
 
     @available(*, deprecated)
     func testCanLeaveAnIPv4MulticastGroup() throws {
+#if os(Windows)
+        throw XCTSkip("NIONetworkInterface APIs are unavailable on Windows")
+#else
         let multicastInterface = try assertNoThrowWithValue(self.interfaceForAddress(address: "127.0.0.1"))
         guard multicastInterface.multicastSupported else {
             // alas, we don't support multicast, let's skip
@@ -482,10 +495,14 @@ final class MulticastTest: XCTestCase {
             sender: sender,
             multicastAddress: multicastAddress
         )
+#endif
     }
 
     @available(*, deprecated)
     func testCanLeaveAnIPv6MulticastGroup() throws {
+#if os(Windows)
+        throw XCTSkip("NIONetworkInterface APIs are unavailable on Windows")
+#else
         guard System.supportsIPv6 else {
             // Skip on non-IPv6 systems
             return
@@ -547,6 +564,7 @@ final class MulticastTest: XCTestCase {
             sender: sender,
             multicastAddress: multicastAddress
         )
+#endif
     }
 
     func testCanJoinBasicMulticastGroupIPv4WithDevice() throws {
@@ -812,6 +830,3 @@ final class MulticastTest: XCTestCase {
         )
     }
 }
-
-#endif
-

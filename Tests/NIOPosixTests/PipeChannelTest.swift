@@ -271,9 +271,6 @@ final class PipeChannelTest: XCTestCase {
     }
 
     func testWeWorkFineWithASingleFileDescriptor() throws {
-        #if os(Windows)
-        throw XCTSkip("Pipe channel socketpair tests are unsupported on Windows")
-        #else
         final class EchoHandler: ChannelInboundHandler, Sendable {
             typealias InboundIn = ByteBuffer
             typealias OutboundOut = ByteBuffer
@@ -284,6 +281,31 @@ final class PipeChannelTest: XCTestCase {
                 }
             }
         }
+        #if os(Windows)
+        let (channelDescriptor, peerDescriptor) = try NIOPipeBootstrap.makePipeDescriptorPair()
+        let peer = WindowsTestSocket(descriptor: peerDescriptor)
+        defer {
+            peer.close()
+        }
+
+        let payload: [UInt8] = [UInt8(ascii: "X")]
+        XCTAssertNoThrow(try peer.writeBytes(payload[...]), "failed to prime pipe descriptor")
+
+        var maybeChannel: Channel? = nil
+        XCTAssertNoThrow(
+            maybeChannel = try NIOPipeBootstrap(group: self.group)
+                .channelInitializer { channel in
+                    channel.pipeline.addHandler(EchoHandler())
+                }
+                .takingOwnershipOfDescriptor(inputOutput: channelDescriptor)
+                .wait()
+        )
+        defer {
+            XCTAssertNoThrow(try maybeChannel?.close().wait())
+        }
+
+        XCTAssertEqual(payload, try peer.readBytes(ofExactLength: payload.count))
+        #else
         // We're using a socketpair here and not say a serial line because it's much harder to get a serial line :).
         var socketPair: [CInt] = [-1, -1]
         XCTAssertNoThrow(

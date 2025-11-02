@@ -643,13 +643,14 @@ final class SocketChannelTest: XCTestCase {
         XCTAssertNoThrow(
             try socket.withUnsafeHandle { fd in
                 var reuse: CInt = 1
-                try withUnsafePointer(to: &reuse) { pointer in
+                let reuseSize = socklen_t(MemoryLayout<CInt>.size)
+                try withUnsafePointer(to: reuse) { pointer in
                     try NIOBSDSocket.setsockopt(
                         socket: fd,
                         level: .socket,
                         option_name: .so_reuseaddr,
-                        option_value: pointer,
-                        option_len: socklen_t(MemoryLayout.size(ofValue: reuse))
+                        option_value: UnsafeRawPointer(pointer),
+                        option_len: reuseSize
                     )
                 }
             }
@@ -832,13 +833,14 @@ final class SocketChannelTest: XCTestCase {
         XCTAssertNoThrow(
             try socket.withUnsafeHandle { fd in
                 var buffer: CInt = 4096
-                try withUnsafePointer(to: &buffer) { pointer in
+                let bufferSize = socklen_t(MemoryLayout<CInt>.size)
+                try withUnsafePointer(to: buffer) { pointer in
                     try NIOBSDSocket.setsockopt(
                         socket: fd,
                         level: .socket,
                         option_name: .so_rcvbuf,
-                        option_value: pointer,
-                        option_len: socklen_t(MemoryLayout.size(ofValue: buffer))
+                        option_value: UnsafeRawPointer(pointer),
+                        option_len: bufferSize
                     )
                 }
             }
