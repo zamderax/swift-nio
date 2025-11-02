@@ -21,23 +21,37 @@ import struct WinSDK.socklen_t
 #endif
 
 #if os(Windows)
+private let invalidPipeHandle: NIOBSDSocket.Handle = ~NIOBSDSocket.Handle(0)
+#else
+private let invalidPipeHandle: NIOBSDSocket.Handle = -1
 #endif
 
 final class SelectablePipeHandle {
     var fileDescriptor: NIOBSDSocket.Handle
 
     var isOpen: Bool {
+        #if os(Windows)
+        self.fileDescriptor != invalidPipeHandle
+        #else
         self.fileDescriptor >= 0
+        #endif
     }
 
     init(takingOwnershipOfDescriptor fd: NIOBSDSocket.Handle) {
+        #if os(Windows)
+        precondition(fd != invalidPipeHandle, "invalid socket handle")
+        #else
         precondition(fd >= 0)
+        #endif
         self.fileDescriptor = fd
     }
 
     func close() throws {
         #if os(Windows)
-        throw makeWindowsPipeUnsupportedIOError()
+        let fd = try self.takeDescriptorOwnership()
+        if WinSDK.closesocket(fd) == WinSDK.SOCKET_ERROR {
+            throw IOError(winsock: WSAGetLastError(), reason: "closesocket")
+        }
         #else
         let fd = try self.takeDescriptorOwnership()
         try Posix.close(descriptor: fd)
@@ -46,7 +60,13 @@ final class SelectablePipeHandle {
 
     func takeDescriptorOwnership() throws -> NIOBSDSocket.Handle {
         #if os(Windows)
-        throw makeWindowsPipeUnsupportedIOError()
+        guard self.isOpen else {
+            throw IOError(winsock: WinSDK.WSAEBADF, reason: "SelectablePipeHandle already closed [in close]")
+        }
+        defer {
+            self.fileDescriptor = invalidPipeHandle
+        }
+        return self.fileDescriptor
         #else
         guard self.isOpen else {
             throw IOError(errnoCode: EBADF, reason: "SelectablePipeHandle already closed [in close]")
@@ -66,7 +86,11 @@ final class SelectablePipeHandle {
 extension SelectablePipeHandle: Selectable {
     func withUnsafeHandle<T>(_ body: (NIOBSDSocket.Handle) throws -> T) throws -> T {
         guard self.isOpen else {
+            #if os(Windows)
+            throw IOError(winsock: WinSDK.WSAEBADF, reason: "SelectablePipeHandle already closed [in wUH]")
+            #else
             throw IOError(errnoCode: EBADF, reason: "SelectablePipeHandle already closed [in wUH]")
+            #endif
         }
         return try body(self.fileDescriptor)
     }
@@ -85,12 +109,16 @@ final class PipePair: SocketProtocol {
     let output: SelectablePipeHandle?
 
     init(input: SelectablePipeHandle?, output: SelectablePipeHandle?) throws {
-        #if os(Windows)
-        throw ChannelError.operationUnsupported
-        #else
         self.input = input
         self.output = output
         try self.ignoreSIGPIPE()
+        #if os(Windows)
+        for fh in [input, output].compactMap({ $0 }) {
+            try fh.withUnsafeHandle { fd in
+                try NIOBSDSocket.setNonBlocking(socket: fd)
+            }
+        }
+        #else
         for fh in [input, output].compactMap({ $0 }) {
             try fh.withUnsafeHandle { fd in
                 try NIOFileHandle.setNonBlocking(fileDescriptor: fd)
@@ -101,7 +129,8 @@ final class PipePair: SocketProtocol {
 
     func ignoreSIGPIPE() throws {
         #if os(Windows)
-        throw ChannelError.operationUnsupported
+        // No SIGPIPE equivalent on Windows.
+        return
         #else
         for fileHandle in [self.input, self.output].compactMap({ $0 }) {
             try fileHandle.withUnsafeHandle {
@@ -125,7 +154,12 @@ final class PipePair: SocketProtocol {
 
     func write(pointer: UnsafeRawBufferPointer) throws -> IOResult<Int> {
         #if os(Windows)
-        throw makeWindowsPipeUnsupportedIOError()
+        guard let outputSPH = self.output else {
+            fatalError("Internal inconsistency inside NIO: outputSPH closed on write. Please file a bug")
+        }
+        return try outputSPH.withUnsafeHandle {
+            try NIOBSDSocket.send(socket: $0, buffer: pointer.baseAddress!, length: pointer.count).map { Int($0) }
+        }
         #else
         guard let outputSPH = self.output else {
             fatalError("Internal inconsistency inside NIO: outputSPH closed on write. Please file a bug")
@@ -138,7 +172,12 @@ final class PipePair: SocketProtocol {
 
     func writev(iovecs: UnsafeBufferPointer<IOVector>) throws -> IOResult<Int> {
         #if os(Windows)
-        throw makeWindowsPipeUnsupportedIOError()
+        guard let outputSPH = self.output else {
+            fatalError("Internal inconsistency inside NIO: outputSPH closed on writev. Please file a bug")
+        }
+        return try outputSPH.withUnsafeHandle {
+            try NIOBSDSocket.writev(socket: $0, iovecs: iovecs)
+        }
         #else
         guard let outputSPH = self.output else {
             fatalError("Internal inconsistency inside NIO: outputSPH closed on writev. Please file a bug")
@@ -151,7 +190,12 @@ final class PipePair: SocketProtocol {
 
     func read(pointer: UnsafeMutableRawBufferPointer) throws -> IOResult<Int> {
         #if os(Windows)
-        throw makeWindowsPipeUnsupportedIOError()
+        guard let inputSPH = self.input else {
+            fatalError("Internal inconsistency inside NIO: inputSPH closed on read. Please file a bug")
+        }
+        return try inputSPH.withUnsafeHandle {
+            try NIOBSDSocket.recv(socket: $0, buffer: pointer.baseAddress!, length: pointer.count).map { Int($0) }
+        }
         #else
         guard let inputSPH = self.input else {
             fatalError("Internal inconsistency inside NIO: inputSPH closed on read. Please file a bug")

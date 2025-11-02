@@ -1,11 +1,61 @@
 #if os(Windows)
+import NIOCore
 import XCTest
 
 @testable import NIOPosix
 
 final class BootstrapTest: XCTestCase {
-    func testBootstrapUnsupportedOnWindows() throws {
-        throw XCTSkip("Bootstrap tests are unsupported on Windows")
+    private final class EchoHandler: ChannelInboundHandler, Sendable {
+        typealias InboundIn = ByteBuffer
+
+        func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+            context.writeAndFlush(data, promise: nil)
+        }
+    }
+
+    func testMakePipeDescriptorPairTransmitsData() throws {
+        let (first, second) = try NIOPipeBootstrap.makePipeDescriptorPair()
+        let socketA = WindowsTestSocket(descriptor: first)
+        let socketB = WindowsTestSocket(descriptor: second)
+        defer {
+            socketA.close()
+            socketB.close()
+        }
+
+        let payload = Array("ping".utf8)
+        try socketA.writeBytes(payload[...])
+        XCTAssertEqual(try socketB.readBytes(ofExactLength: payload.count), payload)
+
+        let reply = Array("pong".utf8)
+        try socketB.writeBytes(reply[...])
+        XCTAssertEqual(try socketA.readBytes(ofExactLength: reply.count), reply)
+    }
+
+    func testTakingOwnershipOfSingleDescriptor() throws {
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer {
+            XCTAssertNoThrow(try group.syncShutdownGracefully())
+        }
+
+        let (channelDescriptor, peerDescriptor) = try NIOPipeBootstrap.makePipeDescriptorPair()
+        let peer = WindowsTestSocket(descriptor: peerDescriptor)
+        defer {
+            peer.close()
+        }
+
+        let channel = try NIOPipeBootstrap(group: group)
+            .channelInitializer { channel in
+                channel.pipeline.addHandler(EchoHandler())
+            }
+            .takingOwnershipOfDescriptor(inputOutput: channelDescriptor)
+            .wait()
+        defer {
+            XCTAssertNoThrow(try channel.close().wait())
+        }
+
+        let loopbackMessage = Array("hello".utf8)
+        try peer.writeBytes(loopbackMessage[...])
+        XCTAssertEqual(try peer.readBytes(ofExactLength: loopbackMessage.count), loopbackMessage)
     }
 }
 #else//===----------------------------------------------------------------------===//

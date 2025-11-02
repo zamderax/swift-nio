@@ -61,7 +61,6 @@ public protocol SocketOptionProvider: _NIOPreconcurrencySendable {
     /// The `EventLoop` which is used by this `SocketOptionProvider` for execution.
     var eventLoop: EventLoop { get }
 
-    #if !os(Windows)
     /// Set a socket option for a given level and name to the specified value.
     ///
     /// This function is not memory-safe: if you set the generic type parameter incorrectly,
@@ -81,7 +80,6 @@ public protocol SocketOptionProvider: _NIOPreconcurrencySendable {
         name: SocketOptionName,
         value: Value
     ) -> EventLoopFuture<Void>
-    #endif
 
     /// Set a socket option for a given level and name to the specified value.
     ///
@@ -103,7 +101,6 @@ public protocol SocketOptionProvider: _NIOPreconcurrencySendable {
         value: Value
     ) -> EventLoopFuture<Void>
 
-    #if !os(Windows)
     /// Obtain the value of the socket option for the given level and name.
     ///
     /// This function is not memory-safe: if you set the generic type parameter incorrectly,
@@ -121,7 +118,6 @@ public protocol SocketOptionProvider: _NIOPreconcurrencySendable {
         level: SocketOptionLevel,
         name: SocketOptionName
     ) -> EventLoopFuture<Value>
-    #endif
 
     /// Obtain the value of the socket option for the given level and name.
     ///
@@ -142,28 +138,29 @@ public protocol SocketOptionProvider: _NIOPreconcurrencySendable {
     ) -> EventLoopFuture<Value>
 }
 
-#if !os(Windows)
 extension SocketOptionProvider {
     func unsafeSetSocketOption<Value: Sendable>(
-        level: NIOBSDSocket.OptionLevel,
-        name: NIOBSDSocket.Option,
+        level: SocketOptionLevel,
+        name: SocketOptionName,
         value: Value
     ) -> EventLoopFuture<Void> {
         self.unsafeSetSocketOption(
-            level: SocketOptionLevel(level.rawValue),
-            name: SocketOptionName(name.rawValue),
+            level: NIOBSDSocket.OptionLevel(rawValue: CInt(level)),
+            name: NIOBSDSocket.Option(rawValue: CInt(name)),
             value: value
         )
     }
 
     func unsafeGetSocketOption<Value: Sendable>(
-        level: NIOBSDSocket.OptionLevel,
-        name: NIOBSDSocket.Option
+        level: SocketOptionLevel,
+        name: SocketOptionName
     ) -> EventLoopFuture<Value> {
-        self.unsafeGetSocketOption(level: SocketOptionLevel(level.rawValue), name: SocketOptionName(name.rawValue))
+        self.unsafeGetSocketOption(
+            level: NIOBSDSocket.OptionLevel(rawValue: CInt(level)),
+            name: NIOBSDSocket.Option(rawValue: CInt(name))
+        )
     }
 }
-#endif
 
 enum SocketOptionProviderError: Swift.Error {
     case unsupported

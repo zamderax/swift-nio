@@ -166,6 +166,16 @@ final class SocketChannel: BaseStreamSocketChannel<Socket>, @unchecked Sendable 
         return false
     }
 
+#if os(Windows)
+    override func connectSocket(to address: HyperVSocketAddress) throws -> Bool {
+        if try self.socket.connect(to: address) {
+            return true
+        }
+        self.scheduleConnectTimeout()
+        return false
+    }
+#endif
+
     override func finishConnectSocket() throws {
         if let scheduled = self.connectTimeoutScheduled {
             // Connection established so cancel the previous scheduled timeout.
@@ -293,6 +303,9 @@ final class ServerSocketChannel: BaseSocketChannel<ServerSocket>, @unchecked Sen
     internal enum BindTarget {
         case socketAddress(_: SocketAddress)
         case vsockAddress(_: VsockAddress)
+#if os(Windows)
+        case hyperVSocketAddress(_: HyperVSocketAddress)
+#endif
     }
 
     internal func bind0(to target: BindTarget, promise: EventLoopPromise<Void>?) {
@@ -322,6 +335,8 @@ final class ServerSocketChannel: BaseSocketChannel<ServerSocket>, @unchecked Sen
             #if os(Windows)
             case .vsockAddress:
                 fatalError(vsockUnimplemented)
+            case .hyperVSocketAddress(let address):
+                try socket.bind(to: address)
             #else
             case .vsockAddress(let address):
                 try socket.bind(to: address)
@@ -455,6 +470,10 @@ final class ServerSocketChannel: BaseSocketChannel<ServerSocket>, @unchecked Sen
         switch event {
         case let event as VsockChannelEvents.BindToAddress:
             self.bind0(to: .vsockAddress(event.address), promise: promise)
+#if os(Windows)
+        case let event as HyperVSocketChannelEvents.BindToAddress:
+            self.bind0(to: .hyperVSocketAddress(event.address), promise: promise)
+#endif
         default:
             promise?.fail(ChannelError._operationUnsupported)
         }

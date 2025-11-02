@@ -27,6 +27,7 @@ public typealias SocketOptionLevel = CInt
 public typealias SocketOptionValue = CInt
 #endif
 
+
 @available(*, deprecated, renamed: "ChannelOptions.Types.SocketOption")
 public typealias SocketOption = ChannelOptions.Types.SocketOption
 
@@ -92,7 +93,6 @@ extension ChannelOptions {
                 }
             }
 
-            #if !os(Windows)
             /// Create a new `SocketOption`.
             ///
             /// - Parameters:
@@ -102,7 +102,6 @@ extension ChannelOptions {
                 self.optionLevel = NIOBSDSocket.OptionLevel(rawValue: CInt(level))
                 self.optionName = NIOBSDSocket.Option(rawValue: CInt(name))
             }
-            #endif
 
             /// Create a new `SocketOption`.
             ///
@@ -299,12 +298,10 @@ extension ChannelOptions {
 
 /// Provides `ChannelOption`s to be used with a `Channel`, `Bootstrap` or `ServerBootstrap`.
 public struct ChannelOptions: Sendable {
-    #if !os(Windows)
     public static let socket: @Sendable (SocketOptionLevel, SocketOptionName) -> ChannelOptions.Types.SocketOption = {
         (level: SocketOptionLevel, name: SocketOptionName) -> Types.SocketOption in
         .init(level: NIOBSDSocket.OptionLevel(rawValue: CInt(level)), name: NIOBSDSocket.Option(rawValue: CInt(name)))
     }
-    #endif
 
     /// - seealso: `SocketOption`.
     public static let socketOption: @Sendable (NIOBSDSocket.Option) -> ChannelOptions.Types.SocketOption = {
@@ -372,11 +369,9 @@ public struct ChannelOptions: Sendable {
 
 /// - seealso: `SocketOption`.
 extension ChannelOption where Self == ChannelOptions.Types.SocketOption {
-    #if !(os(Windows))
     public static func socket(_ level: SocketOptionLevel, _ name: SocketOptionName) -> Self {
         .init(level: NIOBSDSocket.OptionLevel(rawValue: CInt(level)), name: NIOBSDSocket.Option(rawValue: CInt(name)))
     }
-    #endif
 
     public static func socketOption(_ name: NIOBSDSocket.Option) -> Self {
         .init(level: .socket, name: name)
@@ -566,3 +561,4 @@ extension ChannelOptions {
         }
     }
 }
+

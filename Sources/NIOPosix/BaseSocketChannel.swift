@@ -442,9 +442,18 @@ class BaseSocketChannel<SocketType: BaseSocketProtocol>: SelectableChannel, Chan
         fatalError("this must be overridden by sub class")
     }
 
+#if os(Windows)
+    func connectSocket(to address: HyperVSocketAddress) throws -> Bool {
+        fatalError("this must be overridden by sub class")
+    }
+#endif
+
     enum ConnectTarget {
         case socketAddress(SocketAddress)
         case vsockAddress(VsockAddress)
+#if os(Windows)
+        case hyperVSocketAddress(HyperVSocketAddress)
+#endif
     }
 
     /// Begin connection of the underlying socket.
@@ -458,6 +467,10 @@ class BaseSocketChannel<SocketType: BaseSocketProtocol>: SelectableChannel, Chan
             return try self.connectSocket(to: address)
         case .vsockAddress(let address):
             return try self.connectSocket(to: address)
+#if os(Windows)
+        case .hyperVSocketAddress(let address):
+            return try self.connectSocket(to: address)
+#endif
         }
     }
 
@@ -979,6 +992,10 @@ class BaseSocketChannel<SocketType: BaseSocketProtocol>: SelectableChannel, Chan
         switch event {
         case let event as VsockChannelEvents.ConnectToAddress:
             self.connect0(to: .vsockAddress(event.address), promise: promise)
+#if os(Windows)
+        case let event as HyperVSocketChannelEvents.ConnectToAddress:
+            self.connect0(to: .hyperVSocketAddress(event.address), promise: promise)
+#endif
         default:
             promise?.fail(ChannelError._operationUnsupported)
         }

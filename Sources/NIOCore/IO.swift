@@ -84,7 +84,25 @@ public struct IOError: Swift.Error {
         }
     }
 
-    #if os(Windows)
+#if os(Windows)
+    public var winsockCode: CInt? {
+        switch self.error {
+        case .winsock(let code):
+            return code
+        default:
+            return nil
+        }
+    }
+
+    public var windowsCode: DWORD? {
+        switch self.error {
+        case .windows(let code):
+            return code
+        default:
+            return nil
+        }
+    }
+
     public init(windows code: DWORD, reason: String) {
         self.error = .windows(code)
         self.failureDescription = reason

@@ -32,6 +32,7 @@ import let WinSDK.INVALID_SOCKET
 import let WinSDK.IPPROTO_IP
 import let WinSDK.IPPROTO_IPV6
 import let WinSDK.IPPROTO_TCP
+import let WinSDK.IPPROTO_UDP
 
 import let WinSDK.IP_ADD_MEMBERSHIP
 import let WinSDK.IP_DROP_MEMBERSHIP
@@ -63,6 +64,11 @@ import let WinSDK.SO_RCVBUF
 import let WinSDK.SO_RCVTIMEO
 import let WinSDK.SO_REUSEADDR
 import let WinSDK.SO_REUSE_UNICASTPORT
+import let WinSDK.SOCKET_ERROR
+import let WinSDK.UDP_RECV_MAX_COALESCED_SIZE
+import let WinSDK.UDP_SEND_MSG_SIZE
+import let WinSDK.WSAENOPROTOOPT
+import let WinSDK.WSAEOPNOTSUPP
 
 import let WinSDK.SOL_SOCKET
 
@@ -701,19 +707,95 @@ extension NIOBSDSocketControlMessage {
 
 extension NIOBSDSocket {
     static func setUDPSegmentSize(_ segmentSize: CInt, socket: NIOBSDSocket.Handle) throws {
-        throw ChannelError.operationUnsupported
+        let value = UInt32(bitPattern: segmentSize)
+        let result = withUnsafeBytes(of: value) { rawBuffer -> CInt in
+            let optPtr = rawBuffer.baseAddress!.assumingMemoryBound(to: CChar.self)
+            return WinSDK.setsockopt(
+                socket,
+                Int32(IPPROTO_UDP.rawValue),
+                Int32(UDP_SEND_MSG_SIZE),
+                optPtr,
+                Int32(rawBuffer.count)
+            )
+        }
+        if result == SOCKET_ERROR {
+            let error = WSAGetLastError()
+            if error == WSAEOPNOTSUPP || error == WSAENOPROTOOPT {
+                throw ChannelError.operationUnsupported
+            }
+            throw IOError(winsock: error, reason: "setsockopt(UDP_SEND_MSG_SIZE)")
+        }
     }
 
     static func getUDPSegmentSize(socket: NIOBSDSocket.Handle) throws -> CInt {
-        throw ChannelError.operationUnsupported
+        var value: UInt32 = 0
+        var optlen: Int32 = Int32(MemoryLayout.size(ofValue: value))
+        let result = withUnsafeMutableBytes(of: &value) { rawBuffer -> CInt in
+            let optPtr = rawBuffer.baseAddress!.assumingMemoryBound(to: CChar.self)
+            return withUnsafeMutablePointer(to: &optlen) { optlenPtr in
+                WinSDK.getsockopt(
+                    socket,
+                    Int32(IPPROTO_UDP.rawValue),
+                    Int32(UDP_SEND_MSG_SIZE),
+                    optPtr,
+                    optlenPtr
+                )
+            }
+        }
+        if result == SOCKET_ERROR {
+            let error = WSAGetLastError()
+            if error == WSAEOPNOTSUPP || error == WSAENOPROTOOPT {
+                throw ChannelError.operationUnsupported
+            }
+            throw IOError(winsock: error, reason: "getsockopt(UDP_SEND_MSG_SIZE)")
+        }
+        return CInt(bitPattern: value)
     }
 
     static func setUDPReceiveOffload(_ enabled: Bool, socket: NIOBSDSocket.Handle) throws {
-        throw ChannelError.operationUnsupported
+        let value: UInt32 = enabled ? UInt32.max : 0
+        let result = withUnsafeBytes(of: value) { rawBuffer -> CInt in
+            let optPtr = rawBuffer.baseAddress!.assumingMemoryBound(to: CChar.self)
+            return WinSDK.setsockopt(
+                socket,
+                Int32(IPPROTO_UDP.rawValue),
+                Int32(UDP_RECV_MAX_COALESCED_SIZE),
+                optPtr,
+                Int32(rawBuffer.count)
+            )
+        }
+        if result == SOCKET_ERROR {
+            let error = WSAGetLastError()
+            if error == WSAEOPNOTSUPP || error == WSAENOPROTOOPT {
+                throw ChannelError.operationUnsupported
+            }
+            throw IOError(winsock: error, reason: "setsockopt(UDP_RECV_MAX_COALESCED_SIZE)")
+        }
     }
 
     static func getUDPReceiveOffload(socket: NIOBSDSocket.Handle) throws -> Bool {
-        throw ChannelError.operationUnsupported
+        var value: UInt32 = 0
+        var optlen: Int32 = Int32(MemoryLayout.size(ofValue: value))
+        let result = withUnsafeMutableBytes(of: &value) { rawBuffer -> CInt in
+            let optPtr = rawBuffer.baseAddress!.assumingMemoryBound(to: CChar.self)
+            return withUnsafeMutablePointer(to: &optlen) { optlenPtr in
+                WinSDK.getsockopt(
+                    socket,
+                    Int32(IPPROTO_UDP.rawValue),
+                    Int32(UDP_RECV_MAX_COALESCED_SIZE),
+                    optPtr,
+                    optlenPtr
+                )
+            }
+        }
+        if result == SOCKET_ERROR {
+            let error = WSAGetLastError()
+            if error == WSAEOPNOTSUPP || error == WSAENOPROTOOPT {
+                throw ChannelError.operationUnsupported
+            }
+            throw IOError(winsock: error, reason: "getsockopt(UDP_RECV_MAX_COALESCED_SIZE)")
+        }
+        return value != 0
     }
 }
 

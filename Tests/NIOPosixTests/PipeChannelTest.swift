@@ -13,13 +13,121 @@
 //===----------------------------------------------------------------------===//
 
 #if os(Windows)
+import NIOCore
+import WinSDK
 import XCTest
 
 @testable import NIOPosix
 
 final class PipeChannelTest: XCTestCase {
-    func testPipeUnsupportedOnWindows() throws {
-        throw XCTSkip("PipeChannel is not implemented on Windows yet")
+    var group: MultiThreadedEventLoopGroup!
+    var channel: Channel!
+    var toChannel: WindowsTestSocket?
+    var fromChannel: WindowsTestSocket?
+    var buffer: ByteBuffer!
+
+    override func setUp() {
+        super.setUp()
+        self.group = .init(numberOfThreads: 1)
+        do {
+            let (channelInput, peerInput) = try NIOPipeBootstrap.makePipeDescriptorPair()
+            let (channelOutput, peerOutput) = try NIOPipeBootstrap.makePipeDescriptorPair()
+            self.toChannel = WindowsTestSocket(descriptor: peerInput)
+            self.fromChannel = WindowsTestSocket(descriptor: peerOutput)
+            self.channel = try NIOPipeBootstrap(group: self.group)
+                .takingOwnershipOfDescriptors(input: channelInput, output: channelOutput)
+                .wait()
+            self.buffer = self.channel.allocator.buffer(capacity: 128)
+        } catch {
+            XCTFail("Failed to set up PipeChannel: \(error)")
+        }
+    }
+
+    override func tearDown() {
+        if let toChannel {
+            toChannel.close()
+            self.toChannel = nil
+        }
+        if let fromChannel {
+            fromChannel.close()
+            self.fromChannel = nil
+        }
+        if let channel {
+            XCTAssertNoThrow(try channel.syncCloseAcceptingAlreadyClosed())
+            self.channel = nil
+        }
+        if let group {
+            XCTAssertNoThrow(try group.syncShutdownGracefully())
+            self.group = nil
+        }
+        self.buffer = nil
+        super.tearDown()
+    }
+
+    func testBasicIO() throws {
+        final class EchoHandler: ChannelInboundHandler, Sendable {
+            typealias InboundIn = ByteBuffer
+
+            func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+                context.writeAndFlush(data).whenFailure { error in
+                    XCTFail("unexpected error: \(error)")
+                }
+            }
+        }
+
+        guard let channel, let toChannel, let fromChannel else {
+            XCTFail("Channel not configured")
+            return
+        }
+
+        XCTAssertTrue(channel.isActive)
+        XCTAssertNoThrow(try channel.pipeline.addHandler(EchoHandler()).wait())
+
+        let bytes = Array(repeating: UInt8(ascii: "x"), count: 200_000)
+        for length in [1, 10_000, 100_000, 200_000] {
+            let slice = bytes[0..<length]
+            XCTAssertNoThrow(try toChannel.writeBytes(slice))
+            XCTAssertEqual(Array(slice), try fromChannel.readBytes(ofExactLength: length))
+        }
+    }
+
+    func testWriteErrorsCloseChannel() throws {
+        guard let channel, let fromChannel else {
+            XCTFail("Channel not configured")
+            return
+        }
+
+        XCTAssertNoThrow(try channel.setOption(.allowRemoteHalfClosure, value: true).wait())
+
+        let writeFuture = channel.eventLoop.flatSubmit {
+            fromChannel.close()
+            var buffer = channel.allocator.buffer(capacity: 1)
+            buffer.writeString("X")
+            return channel.writeAndFlush(buffer)
+        }
+
+        XCTAssertThrowsError(try writeFuture.wait()) { error in
+            guard let ioError = error as? IOError else {
+                XCTFail("unexpected error: \(error)")
+                return
+            }
+            let errno = ioError.errnoCode
+            XCTAssertTrue(
+                [WinSDK.WSAECONNRESET, WinSDK.WSAESHUTDOWN, WinSDK.WSAENOTCONN].contains(errno),
+                "unexpected errno: \(errno)"
+            )
+        }
+    }
+
+    func testRejectInvalidSocketDescriptors() throws {
+        let invalid: NIOPipeBootstrap.PipeDescriptor = ~NIOPipeBootstrap.PipeDescriptor(0)
+        XCTAssertThrowsError(
+            try NIOPipeBootstrap(group: self.group)
+                .takingOwnershipOfDescriptors(input: invalid, output: invalid)
+                .wait()
+        ) { error in
+            XCTAssertEqual(error as? ChannelError, .operationUnsupported)
+        }
     }
 }
 #else

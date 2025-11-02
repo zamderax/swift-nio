@@ -18,6 +18,11 @@ import XCTest
 
 @testable import NIOPosix
 
+#if os(Windows)
+import CNIOWindows
+import WinSDK
+#endif
+
 #if os(Linux)
 import CNIOLinux
 #endif
@@ -421,11 +426,6 @@ class DatagramChannelTests: XCTestCase {
         try assertRecvMsgFails(error: EFAULT, active: false)
     }
 
-#if os(Windows)
-    private func assertRecvMsgFails(error: Int32, active: Bool) throws {
-        throw XCTSkip("recvmsg is unavailable on Windows")
-    }
-#else
     private func assertRecvMsgFails(error: Int32, active: Bool) throws {
         final class RecvFromHandler: ChannelInboundHandler, Sendable {
             typealias InboundIn = AddressedEnvelope<ByteBuffer>
@@ -454,6 +454,20 @@ class DatagramChannelTests: XCTestCase {
         }
         class NonRecvFromSocket: Socket {
             private var error: Int32?
+#if os(Windows)
+            private func mapError(_ error: Int32) -> CInt {
+                switch error {
+                case CInt(ECONNREFUSED):
+                    return WinSDK.WSAECONNRESET
+                case CInt(ENOMEM):
+                    return WinSDK.WSAENOBUFS
+                case CInt(EFAULT):
+                    return WinSDK.WSAEFAULT
+                default:
+                    return error
+                }
+            }
+#endif
 
             init(error: Int32) throws {
                 self.error = error
@@ -470,7 +484,11 @@ class DatagramChannelTests: XCTestCase {
             {
                 if let err = self.error {
                     self.error = nil
+#if os(Windows)
+                    throw IOError(winsock: self.mapError(err), reason: "recvfrom")
+#else
                     throw IOError(errnoCode: err, reason: "recvfrom")
+#endif
                 }
                 return IOResult.wouldBlock(0)
             }
@@ -494,7 +512,29 @@ class DatagramChannelTests: XCTestCase {
             XCTAssertNoThrow(try channel.close().wait())
         }
         let ioError = try promise.futureResult.wait()
+#if os(Windows)
+        if let winsock = ioError.winsockCode {
+            XCTAssertEqual(self.winsockError(from: error), winsock)
+        } else {
+            XCTAssertEqual(error, ioError.errnoCode)
+        }
+#else
         XCTAssertEqual(error, ioError.errnoCode)
+#endif
+    }
+
+#if os(Windows)
+    private func winsockError(from errno: Int32) -> CInt {
+        switch errno {
+        case ECONNREFUSED:
+            return WinSDK.WSAECONNRESET
+        case ENOMEM:
+            return WinSDK.WSAENOBUFS
+        case EFAULT:
+            return WinSDK.WSAEFAULT
+        default:
+            return CInt(errno)
+        }
     }
 #endif
 
@@ -611,13 +651,15 @@ class DatagramChannelTests: XCTestCase {
     }
 
     func testSettingTwoDistinctChannelOptionsWorksForDatagramChannel() throws {
-        #if os(Windows)
-        throw XCTSkip("Datagram socket option tests are unsupported on Windows")
-        #else
         let channel = try assertNoThrowWithValue(
             DatagramBootstrap(group: group)
+#if os(Windows)
+                .channelOption(.socketOption(.so_reuseaddr), value: 1)
+                .channelOption(.socketOption(.so_broadcast), value: 1)
+#else
                 .channelOption(.socketOption(.so_reuseaddr), value: 1)
                 .channelOption(.socketOption(.so_timestamp), value: 1)
+#endif
                 .bind(host: "127.0.0.1", port: 0)
                 .wait()
         )
@@ -625,9 +667,12 @@ class DatagramChannelTests: XCTestCase {
             XCTAssertNoThrow(try channel.close().wait())
         }
         XCTAssertTrue(try getBoolSocketOption(channel: channel, level: .socket, name: .so_reuseaddr))
+#if os(Windows)
+        XCTAssertTrue(try getBoolSocketOption(channel: channel, level: .socket, name: .so_broadcast))
+#else
         XCTAssertTrue(try getBoolSocketOption(channel: channel, level: .socket, name: .so_timestamp))
+#endif
         XCTAssertFalse(try getBoolSocketOption(channel: channel, level: .socket, name: .so_keepalive))
-        #endif
     }
 
     func testUnprocessedOutboundUserEventFailsOnDatagramChannel() throws {

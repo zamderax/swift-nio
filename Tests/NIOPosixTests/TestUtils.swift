@@ -20,6 +20,11 @@ import XCTest
 @testable import NIOCore
 @testable import NIOPosix
 
+#if os(Windows)
+import WinSDK
+import ucrt
+#endif
+
 extension System {
     static var supportsIPv6: Bool {
         do {
@@ -35,19 +40,59 @@ extension System {
         guard let modules = try? String(contentsOf: URL(fileURLWithPath: "/proc/modules"), encoding: .utf8) else {
             return false
         }
-        return modules.split(separator: "\n").compactMap({ $0.split(separator: " ").first }).contains("vsock_loopback")
+        return modules
+            .split(separator: "\n")
+            .compactMap { $0.split(separator: " ").first }
+            .contains("vsock_loopback")
+        #else
+        return false
+        #endif
+    }
+
+    static var supportsHyperVLoopback: Bool {
+        #if os(Windows)
+        do {
+            let socket = try ServerSocket(protocolFamily: .hyperV, setNonBlocking: true)
+            defer { try? socket.close() }
+            let serviceId = try HyperVSocketAddress.generateServiceIdentifier()
+            let address = HyperVSocketAddress(vmId: HyperVSocketAddress.VmId.loopback, serviceId: serviceId)
+            try socket.bind(to: address)
+            return true
+        } catch {
+            return false
+        }
         #else
         return false
         #endif
     }
 }
 
-#if os(Windows)
 func withPipe(_ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) throws -> [NIOCore.NIOFileHandle]) throws {
-    throw XCTSkip("Pipe-based test utilities are unsupported on Windows")
-}
-#else
-func withPipe(_ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) throws -> [NIOCore.NIOFileHandle]) throws {
+    #if os(Windows)
+    var pipeFDs = [CInt](repeating: -1, count: 2)
+    let pipeResult = pipeFDs.withUnsafeMutableBufferPointer { ptr -> CInt in
+        _pipe(ptr.baseAddress, 4096, _O_BINARY)
+    }
+    XCTAssertEqual(0, pipeResult, "failed to create pipe: \(_windowsErrno())")
+    guard pipeFDs[0] >= 0, pipeFDs[1] >= 0 else {
+        throw IOError(errnoCode: _windowsErrno(), reason: "_pipe")
+    }
+    let readFH = NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: pipeFDs[0])
+    let writeFH = NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: pipeFDs[1])
+    var toClose: [NIOFileHandle] = [readFH, writeFH]
+    var thrownError: Error?
+    do {
+        toClose = try body(readFH, writeFH)
+    } catch {
+        thrownError = error
+    }
+    for handle in toClose {
+        XCTAssertNoThrow(try handle.close())
+    }
+    if let thrownError {
+        throw thrownError
+    }
+    #else
     var fds: [Int32] = [-1, -1]
     fds.withUnsafeMutableBufferPointer { ptr in
         XCTAssertEqual(0, pipe(ptr.baseAddress!))
@@ -67,21 +112,38 @@ func withPipe(_ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) throws -> [
     if let error = error {
         throw error
     }
+    #endif
 }
-#endif
 
-#if os(Windows)
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
 func withPipe(
     _ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) async throws -> [NIOCore.NIOFileHandle]
 ) async throws {
-    throw XCTSkip("Pipe-based test utilities are unsupported on Windows")
-}
-#else
-@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
-func withPipe(
-    _ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) async throws -> [NIOCore.NIOFileHandle]
-) async throws {
+    #if os(Windows)
+    var pipeFDs = [CInt](repeating: -1, count: 2)
+    let pipeResult = pipeFDs.withUnsafeMutableBufferPointer { ptr -> CInt in
+        _pipe(ptr.baseAddress, 4096, _O_BINARY)
+    }
+    XCTAssertEqual(0, pipeResult, "failed to create pipe: \(_windowsErrno())")
+    guard pipeFDs[0] >= 0, pipeFDs[1] >= 0 else {
+        throw IOError(errnoCode: _windowsErrno(), reason: "_pipe")
+    }
+    let readFH = NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: pipeFDs[0])
+    let writeFH = NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: pipeFDs[1])
+    var toClose: [NIOFileHandle] = [readFH, writeFH]
+    var thrownError: Error?
+    do {
+        toClose = try await body(readFH, writeFH)
+    } catch {
+        thrownError = error
+    }
+    for handle in toClose {
+        try handle.close()
+    }
+    if let thrownError {
+        throw thrownError
+    }
+    #else
     var fds: [Int32] = [-1, -1]
     fds.withUnsafeMutableBufferPointer { ptr in
         XCTAssertEqual(0, pipe(ptr.baseAddress!))
@@ -101,8 +163,8 @@ func withPipe(
     if let error = error {
         throw error
     }
+    #endif
 }
-#endif
 
 // swift-format-ignore: AmbiguousTrailingClosureOverload
 func withTemporaryDirectory<T>(_ body: (String) throws -> T) rethrows -> T {
@@ -173,18 +235,33 @@ func withTemporaryUnixDomainSocketPathName<T>(
 }
 #endif
 
-#if os(Windows)
-func withTemporaryFile<T>(
-    content: String? = nil,
-    _ body: (NIOCore.NIOFileHandle, String) throws -> T
-) throws -> T {
-    throw XCTSkip("Temporary file helpers are unsupported on Windows")
-}
-#else
 func withTemporaryFile<T>(
     content: String? = nil,
     _ body: (NIOCore.NIOFileHandle, String) throws -> T
 ) rethrows -> T {
+    #if os(Windows)
+    let (fd, path) = openTemporaryFile()
+    let fileHandle = NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: fd)
+    defer {
+        XCTAssertNoThrow(try fileHandle.close())
+        XCTAssertNoThrow(try FileManager.default.removeItem(atPath: path))
+    }
+    if let content = content {
+        let bytes = Array(content.utf8)
+        bytes.withUnsafeBytes { ptr in
+            var written = 0
+            while written < ptr.count {
+                let remaining = ptr.count - written
+                let result = _write(fd, ptr.baseAddress!.advanced(by: written), UInt32(clamping: remaining))
+                XCTAssertNotEqual(result, -1, "write failed: \(_windowsErrno())")
+                written += Int(result)
+            }
+            let seekResult = _lseek(fd, 0, CInt(SEEK_SET))
+            XCTAssertNotEqual(seekResult, -1, "lseek failed: \(_windowsErrno())")
+        }
+    }
+    return try body(fileHandle, path)
+    #else
     let (fd, path) = openTemporaryFile()
     let fileHandle = NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: fd)
     defer {
@@ -210,23 +287,37 @@ func withTemporaryFile<T>(
         }
     }
     return try body(fileHandle, path)
+    #endif
 }
-#endif
 
-#if os(Windows)
-@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
-func withTemporaryFile<T>(
-    content: String? = nil,
-    _ body: @escaping (NIOCore.NIOFileHandle, String) async throws -> T
-) async throws -> T {
-    throw XCTSkip("Temporary file helpers are unsupported on Windows")
-}
-#else
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
 func withTemporaryFile<T>(
     content: String? = nil,
     _ body: @escaping (NIOCore.NIOFileHandle, String) async throws -> T
 ) async rethrows -> T {
+    #if os(Windows)
+    let (fd, path) = openTemporaryFile()
+    let fileHandle = NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: fd)
+    defer {
+        XCTAssertNoThrow(try fileHandle.close())
+        XCTAssertNoThrow(try FileManager.default.removeItem(atPath: path))
+    }
+    if let content = content {
+        let bytes = Array(content.utf8)
+        bytes.withUnsafeBytes { ptr in
+            var written = 0
+            while written < ptr.count {
+                let remaining = ptr.count - written
+                let result = _write(fd, ptr.baseAddress!.advanced(by: written), UInt32(clamping: remaining))
+                XCTAssertNotEqual(result, -1, "write failed: \(_windowsErrno())")
+                written += Int(result)
+            }
+            let seekResult = _lseek(fd, 0, CInt(SEEK_SET))
+            XCTAssertNotEqual(seekResult, -1, "lseek failed: \(_windowsErrno())")
+        }
+    }
+    return try await body(fileHandle, path)
+    #else
     let (fd, path) = openTemporaryFile()
     let fileHandle = NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: fd)
     defer {
@@ -252,8 +343,8 @@ func withTemporaryFile<T>(
         }
     }
     return try await body(fileHandle, path)
+    #endif
 }
-#endif
 var temporaryDirectory: String {
     get {
         #if targetEnvironment(simulator)
@@ -304,12 +395,23 @@ func createTemporaryDirectory() -> String {
 }
 #endif
 
-#if os(Windows)
 func openTemporaryFile() -> (CInt, String) {
-    fatalError("openTemporaryFile is unsupported on Windows")
-}
-#else
-func openTemporaryFile() -> (CInt, String) {
+    #if os(Windows)
+    let baseURL = FileManager.default.temporaryDirectory
+    let fileURL = baseURL.appendingPathComponent("nio_\(UUID().uuidString)")
+    let path = fileURL.path
+    var fd: CInt = -1
+    let result: errno_t = path.withCString(encodedAs: UTF16.self) { pointer in
+        _wsopen_s(&fd, pointer, _O_RDWR | _O_CREAT | _O_EXCL | _O_BINARY, _SH_DENYRW, _S_IREAD | _S_IWRITE)
+    }
+    precondition(result == 0, "_wsopen_s failed with errno \(result)")
+    precondition(fd >= 0, "_wsopen_s produced invalid descriptor")
+    guard fd >= 0 else {
+        let error = _windowsErrno()
+        preconditionFailure("_wopen failed with errno \(error)")
+    }
+    return (fd, path)
+    #else
     let template = "\(temporaryDirectory)/nio_XXXXXX"
     var templateBytes = template.utf8 + [0]
     let templateBytesCount = templateBytes.count
@@ -321,6 +423,15 @@ func openTemporaryFile() -> (CInt, String) {
     }
     templateBytes.removeLast()
     return (fd, String(decoding: templateBytes, as: Unicode.UTF8.self))
+    #endif
+}
+
+#if os(Windows)
+@inline(__always)
+private func _windowsErrno() -> CInt {
+    var error: CInt = 0
+    _get_errno(&error)
+    return error
 }
 #endif
 
@@ -857,13 +968,13 @@ func withCrossConnectedPipeChannels<R>(
                         try pipe2Read.withUnsafeFileDescriptor { pipe2Read in
                             try pipe2Write.withUnsafeFileDescriptor { pipe2Write in
                                 let channel1 = try NIOPipeBootstrap(group: channel1Group)
-                                    .takingOwnershipOfDescriptors(input: pipe1Read, output: pipe2Write)
+                                    .takingOwnershipOfDescriptors(input: numericCast(pipe1Read), output: numericCast(pipe2Write))
                                     .wait()
                                 defer {
                                     XCTAssertNoThrow(try channel1.syncCloseAcceptingAlreadyClosed())
                                 }
                                 let channel2 = try NIOPipeBootstrap(group: channel2Group)
-                                    .takingOwnershipOfDescriptors(input: pipe2Read, output: pipe1Write)
+                                    .takingOwnershipOfDescriptors(input: numericCast(pipe2Read), output: numericCast(pipe1Write))
                                     .wait()
                                 defer {
                                     XCTAssertNoThrow(try channel2.syncCloseAcceptingAlreadyClosed())
@@ -926,6 +1037,9 @@ extension EventLoopFuture {
         }
     }
 }
+
+
+
 
 
 

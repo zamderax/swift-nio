@@ -60,6 +60,12 @@ final class PipeChannel: BaseStreamSocketChannel<PipePair>, @unchecked Sendable 
         throw ChannelError._operationUnsupported
     }
 
+#if os(Windows)
+    override func connectSocket(to address: HyperVSocketAddress) throws -> Bool {
+        throw ChannelError._operationUnsupported
+    }
+#endif
+
     override func finishConnectSocket() throws {
         throw ChannelError._inappropriateOperationForState
     }

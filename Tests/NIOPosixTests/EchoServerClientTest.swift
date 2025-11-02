@@ -244,7 +244,49 @@ class EchoServerClientTest: XCTestCase {
 
     func testEchoVsock() throws {
         #if os(Windows)
-        throw XCTSkip("Vsock tests are unsupported on Windows")
+        try XCTSkipUnless(System.supportsHyperVLoopback, "Hyper-V sockets are unavailable on this system")
+
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer {
+            XCTAssertNoThrow(try group.syncShutdownGracefully())
+        }
+
+        let numBytes = 16 * 1024
+        let serviceId = try HyperVSocketAddress.generateServiceIdentifier()
+        let bindAddress = HyperVSocketAddress(vmId: HyperVSocketAddress.VmId.loopback, serviceId: serviceId)
+        let promise = group.next().makePromise(of: ByteBuffer.self)
+        let serverChannel = try assertNoThrowWithValue(
+            ServerBootstrap(group: group)
+                .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
+                .childChannelInitializer { channel in
+                    channel.eventLoop.makeCompletedFuture {
+                        let countingHandler = ByteCountingHandler(numBytes: numBytes, promise: promise)
+                        try channel.pipeline.syncOperations.addHandler(countingHandler)
+                    }
+                }
+                .bind(to: bindAddress)
+        )
+        .wait()
+
+        defer {
+            XCTAssertNoThrow(try serverChannel.close().wait())
+        }
+
+        let connectAddress = HyperVSocketAddress(vmId: HyperVSocketAddress.VmId.loopback, serviceId: serviceId)
+        let clientChannel = try assertNoThrowWithValue(ClientBootstrap(group: group).connect(to: connectAddress).wait())
+
+        defer {
+            XCTAssertNoThrow(try clientChannel.syncCloseAcceptingAlreadyClosed())
+        }
+
+        var buffer = clientChannel.allocator.buffer(capacity: numBytes)
+        for i in 0..<numBytes {
+            buffer.writeInteger(UInt8(i % 256))
+        }
+
+        try clientChannel.writeAndFlush(buffer).wait()
+
+        XCTAssertEqual(try promise.futureResult.wait(), buffer)
         #else
         try XCTSkipUnless(System.supportsVsockLoopback, "No vsock loopback transport available")
 

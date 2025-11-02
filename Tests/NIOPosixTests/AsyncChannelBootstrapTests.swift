@@ -601,9 +601,6 @@ final class AsyncChannelBootstrapTests: XCTestCase {
     }
 
     func testServerClientBootstrap_withAsyncChannel_clientConnectedSocket() async throws {
-        #if os(Windows)
-        throw XCTSkip("Client bootstrap with pre-connected sockets is unsupported on Windows")
-        #else
         let eventLoopGroup = self.group!
 
         let channel = try await ServerBootstrap(group: eventLoopGroup)
@@ -661,7 +658,6 @@ final class AsyncChannelBootstrapTests: XCTestCase {
 
             group.cancelAll()
         }
-        #endif
     }
 
     // MARK: Datagram Bootstrap
@@ -771,11 +767,8 @@ final class AsyncChannelBootstrapTests: XCTestCase {
     // MARK: - Pipe Bootstrap
 
     func testPipeBootstrap() async throws {
-        #if os(Windows)
-        throw XCTSkip("Pipe bootstrap tests are unsupported on Windows")
-        #else
         let eventLoopGroup = self.group!
-        let (pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD) = self.makePipeFileDescriptors()
+        let (pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD) = try self.makePipeFileDescriptors()
         let channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>
         let toChannel: NIOAsyncChannel<Never, ByteBuffer>
         let fromChannel: NIOAsyncChannel<ByteBuffer, Never>
@@ -791,9 +784,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD])
             throw error
         }
 
@@ -807,9 +798,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1WriteFD, pipe2ReadFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1WriteFD, pipe2ReadFD])
             throw error
         }
 
@@ -823,9 +812,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe2ReadFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe2ReadFD])
             throw error
         }
 
@@ -844,15 +831,11 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                 }
             }
         }
-        #endif
     }
 
     func testPipeBootstrap_whenInputNil() async throws {
-        #if os(Windows)
-        throw XCTSkip("Pipe bootstrap tests are unsupported on Windows")
-        #else
         let eventLoopGroup = self.group!
-        let (pipe1ReadFD, pipe1WriteFD) = self.makePipeFileDescriptors()
+        let (pipe1ReadFD, pipe1WriteFD) = try self.makePipeFileDescriptors()
         let channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>
         let fromChannel: NIOAsyncChannel<ByteBuffer, Never>
 
@@ -866,9 +849,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1ReadFD, pipe1WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1ReadFD, pipe1WriteFD])
             throw error
         }
 
@@ -882,9 +863,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1WriteFD])
             throw error
         }
 
@@ -900,15 +879,11 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                 try await XCTAsyncAssertEqual(try await fromChannelInboundIterator.next(), response)
             }
         }
-        #endif
     }
 
     func testPipeBootstrap_whenOutputNil() async throws {
-        #if os(Windows)
-        throw XCTSkip("Pipe bootstrap tests are unsupported on Windows")
-        #else
         let eventLoopGroup = self.group!
-        let (pipe1ReadFD, pipe1WriteFD) = self.makePipeFileDescriptors()
+        let (pipe1ReadFD, pipe1WriteFD) = try self.makePipeFileDescriptors()
         let channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>
         let toChannel: NIOAsyncChannel<Never, ByteBuffer>
 
@@ -922,10 +897,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1ReadFD, pipe1WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
-
+            try self.closePipeDescriptors([pipe1ReadFD, pipe1WriteFD])
             throw error
         }
 
@@ -939,9 +911,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1WriteFD])
             throw error
         }
 
@@ -958,15 +928,11 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                 }
             }
         }
-        #endif
     }
 
     func testPipeBootstrap_withProtocolNegotiation() async throws {
-        #if os(Windows)
-        throw XCTSkip("Pipe bootstrap tests are unsupported on Windows")
-        #else
         let eventLoopGroup = self.group!
-        let (pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD) = self.makePipeFileDescriptors()
+        let (pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD) = try self.makePipeFileDescriptors()
         let negotiationResult: EventLoopFuture<NegotiationResult>
         let toChannel: NIOAsyncChannel<Never, ByteBuffer>
         let fromChannel: NIOAsyncChannel<ByteBuffer, Never>
@@ -982,9 +948,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD])
             throw error
         }
 
@@ -998,9 +962,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1WriteFD, pipe2ReadFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1WriteFD, pipe2ReadFD])
             throw error
         }
 
@@ -1014,9 +976,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe2ReadFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe2ReadFD])
             throw error
         }
 
@@ -1038,9 +998,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                             XCTAssertEqual(response, expectedResponse)
                         } catch {
                             // We only got to close the FDs that are not owned by the PipeChannel
-                            for fileDescriptor in [pipe1WriteFD, pipe2ReadFD] {
-                                try? SystemCalls.close(descriptor: fileDescriptor)
-                            }
+                            try? self.closePipeDescriptors([pipe1WriteFD, pipe2ReadFD])
                             throw error
                         }
                     }
@@ -1050,15 +1008,11 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                 }
             }
         }
-        #endif
     }
 
     func testPipeBootstrap_callsChannelInitializer() async throws {
-        #if os(Windows)
-        throw XCTSkip("Pipe bootstrap tests are unsupported on Windows")
-        #else
         let eventLoopGroup = self.group!
-        let (pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD) = self.makePipeFileDescriptors()
+        let (pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD) = try self.makePipeFileDescriptors()
         let channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>
         let toChannel: NIOAsyncChannel<Never, ByteBuffer>
         let fromChannel: NIOAsyncChannel<ByteBuffer, Never>
@@ -1079,9 +1033,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1ReadFD, pipe1WriteFD, pipe2ReadFD, pipe2WriteFD])
             throw error
         }
 
@@ -1099,9 +1051,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1WriteFD, pipe2ReadFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1WriteFD, pipe2ReadFD])
             throw error
         }
 
@@ -1119,9 +1069,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe2ReadFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe2ReadFD])
             throw error
         }
 
@@ -1142,15 +1090,11 @@ final class AsyncChannelBootstrapTests: XCTestCase {
         }
 
         XCTAssertEqual(didCallChannelInitializer.withLockedValue { $0 }, 3)
-        #endif
     }
 
     func testPipeBootstrap_whenInputNil_callsChannelInitializer() async throws {
-        #if os(Windows)
-        throw XCTSkip("Pipe bootstrap tests are unsupported on Windows")
-        #else
         let eventLoopGroup = self.group!
-        let (pipe1ReadFD, pipe1WriteFD) = self.makePipeFileDescriptors()
+        let (pipe1ReadFD, pipe1WriteFD) = try self.makePipeFileDescriptors()
         let channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>
         let fromChannel: NIOAsyncChannel<ByteBuffer, Never>
         let didCallChannelInitializer = NIOLockedValueBox(0)
@@ -1169,9 +1113,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1ReadFD, pipe1WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1ReadFD, pipe1WriteFD])
             throw error
         }
 
@@ -1189,9 +1131,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1WriteFD])
             throw error
         }
 
@@ -1209,15 +1149,11 @@ final class AsyncChannelBootstrapTests: XCTestCase {
         }
 
         XCTAssertEqual(didCallChannelInitializer.withLockedValue { $0 }, 2)
-        #endif
     }
 
     func testPipeBootstrap_whenOutputNil_callsChannelInitializer() async throws {
-        #if os(Windows)
-        throw XCTSkip("Pipe bootstrap tests are unsupported on Windows")
-        #else
         let eventLoopGroup = self.group!
-        let (pipe1ReadFD, pipe1WriteFD) = self.makePipeFileDescriptors()
+        let (pipe1ReadFD, pipe1WriteFD) = try self.makePipeFileDescriptors()
         let channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>
         let toChannel: NIOAsyncChannel<Never, ByteBuffer>
         let didCallChannelInitializer = NIOLockedValueBox(0)
@@ -1236,9 +1172,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1ReadFD, pipe1WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1ReadFD, pipe1WriteFD])
 
             throw error
         }
@@ -1257,9 +1191,7 @@ final class AsyncChannelBootstrapTests: XCTestCase {
                     }
                 }
         } catch {
-            for fileDescriptor in [pipe1WriteFD] {
-                try SystemCalls.close(descriptor: fileDescriptor)
-            }
+            try self.closePipeDescriptors([pipe1WriteFD])
             throw error
         }
 
@@ -1278,7 +1210,6 @@ final class AsyncChannelBootstrapTests: XCTestCase {
         }
 
         XCTAssertEqual(didCallChannelInitializer.withLockedValue { $0 }, 2)
-        #endif
     }
 
     // MARK: RawSocket bootstrap
@@ -1354,7 +1285,59 @@ final class AsyncChannelBootstrapTests: XCTestCase {
 
     func testVSock() async throws {
         #if os(Windows)
-        throw XCTSkip("Vsock tests are unsupported on Windows")
+        try XCTSkipUnless(System.supportsHyperVLoopback, "Hyper-V sockets are unavailable on this system")
+        let eventLoopGroup = self.group!
+
+        let serviceId = try HyperVSocketAddress.generateServiceIdentifier()
+        let bindAddress = HyperVSocketAddress(vmId: HyperVSocketAddress.VmId.loopback, serviceId: serviceId)
+
+        let serverChannel = try await ServerBootstrap(group: eventLoopGroup)
+            .bind(to: bindAddress) { channel in
+                channel.eventLoop.makeCompletedFuture {
+                    try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(LineDelimiterCoder()))
+                    try channel.pipeline.syncOperations.addHandler(MessageToByteHandler(LineDelimiterCoder()))
+                    try channel.pipeline.syncOperations.addHandler(ByteBufferToStringHandler())
+                    return try NIOAsyncChannel<String, String>(wrappingChannelSynchronously: channel)
+                }
+            }
+
+        let connectAddress = HyperVSocketAddress(vmId: HyperVSocketAddress.VmId.loopback, serviceId: serviceId)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            let (stream, continuation) = AsyncStream<StringOrByte>.makeStream()
+            var iterator = stream.makeAsyncIterator()
+
+            group.addTask {
+                try await withThrowingTaskGroup(of: Void.self) { _ in
+                    try await serverChannel.executeThenClose { inbound in
+                        for try await childChannel in inbound {
+                            try await childChannel.executeThenClose { childChannelInbound, _ in
+                                for try await value in childChannelInbound {
+                                    continuation.yield(.string(value))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let stringChannel = try await ClientBootstrap(group: eventLoopGroup)
+                .connect(to: connectAddress) { channel in
+                    channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(LineDelimiterCoder()))
+                        try channel.pipeline.syncOperations.addHandler(MessageToByteHandler(LineDelimiterCoder()))
+                        try channel.pipeline.syncOperations.addHandler(ByteBufferToStringHandler())
+                        return try NIOAsyncChannel<String, String>(wrappingChannelSynchronously: channel)
+                    }
+                }
+            try await stringChannel.executeThenClose { _, outbound in
+                try await outbound.write("hello")
+            }
+
+            await XCTAsyncAssertEqual(await iterator.next(), .string("hello"))
+
+            group.cancelAll()
+        }
         #else
         try XCTSkipUnless(System.supportsVsockLoopback, "No vsock loopback transport available")
         let eventLoopGroup = self.group!
@@ -1419,10 +1402,17 @@ final class AsyncChannelBootstrapTests: XCTestCase {
 
     // MARK: - Test Helpers
 
-    #if !os(Windows)
-    private func makePipeFileDescriptors() -> (
-        pipe1ReadFD: CInt, pipe1WriteFD: CInt, pipe2ReadFD: CInt, pipe2WriteFD: CInt
+    private func makePipeFileDescriptors() throws -> (
+        pipe1ReadFD: NIOPipeBootstrap.PipeDescriptor,
+        pipe1WriteFD: NIOPipeBootstrap.PipeDescriptor,
+        pipe2ReadFD: NIOPipeBootstrap.PipeDescriptor,
+        pipe2WriteFD: NIOPipeBootstrap.PipeDescriptor
     ) {
+        #if os(Windows)
+        let pipe1Descriptors = try NIOPipeBootstrap.makePipeDescriptorPair()
+        let pipe2Descriptors = try NIOPipeBootstrap.makePipeDescriptorPair()
+        return (pipe1Descriptors.0, pipe1Descriptors.1, pipe2Descriptors.0, pipe2Descriptors.1)
+        #else
         var pipe1FDs: [CInt] = [-1, -1]
         pipe1FDs.withUnsafeMutableBufferPointer { ptr in
             XCTAssertEqual(0, pipe(ptr.baseAddress!))
@@ -1432,16 +1422,44 @@ final class AsyncChannelBootstrapTests: XCTestCase {
             XCTAssertEqual(0, pipe(ptr.baseAddress!))
         }
         return (pipe1FDs[0], pipe1FDs[1], pipe2FDs[0], pipe2FDs[1])
+        #endif
     }
 
-    private func makePipeFileDescriptors() -> (pipeReadFD: CInt, pipeWriteFD: CInt) {
+    private func makePipeFileDescriptors() throws -> (
+        pipeReadFD: NIOPipeBootstrap.PipeDescriptor,
+        pipeWriteFD: NIOPipeBootstrap.PipeDescriptor
+    ) {
+        #if os(Windows)
+        return try NIOPipeBootstrap.makePipeDescriptorPair()
+        #else
         var pipeFDs: [CInt] = [-1, -1]
         pipeFDs.withUnsafeMutableBufferPointer { ptr in
             XCTAssertEqual(0, pipe(ptr.baseAddress!))
         }
         return (pipeFDs[0], pipeFDs[1])
+        #endif
     }
-    #endif
+
+    private func closePipeDescriptor(_ descriptor: NIOPipeBootstrap.PipeDescriptor) throws {
+        #if os(Windows)
+        let invalidDescriptor = ~NIOPipeBootstrap.PipeDescriptor(0)
+        guard descriptor != invalidDescriptor else {
+            return
+        }
+        try NIOBSDSocket.close(socket: descriptor)
+        #else
+        guard descriptor >= 0 else {
+            return
+        }
+        try SystemCalls.close(descriptor: descriptor)
+        #endif
+    }
+
+    private func closePipeDescriptors(_ descriptors: [NIOPipeBootstrap.PipeDescriptor]) throws {
+        for descriptor in descriptors {
+            try self.closePipeDescriptor(descriptor)
+        }
+    }
 
     private func makeRawSocketServerChannel(
         eventLoopGroup: EventLoopGroup
@@ -1558,30 +1576,26 @@ final class AsyncChannelBootstrapTests: XCTestCase {
             }
     }
 
-    #if os(Windows)
     private func makeClientChannel(
         eventLoopGroup: EventLoopGroup,
-        fileDescriptor: CInt
+        fileDescriptor: NIOBSDSocket.Handle
     ) async throws -> NIOAsyncChannel<String, String> {
-        throw XCTSkip("withConnectedSocket helpers are unsupported on Windows")
-    }
-    #else
-    private func makeClientChannel(
-        eventLoopGroup: EventLoopGroup,
-        fileDescriptor: CInt
-    ) async throws -> NIOAsyncChannel<String, String> {
-        try await ClientBootstrap(group: eventLoopGroup)
-            .withConnectedSocket(fileDescriptor) { channel in
-                channel.eventLoop.makeCompletedFuture {
-                    try channel.pipeline.syncOperations.addHandler(AddressedEnvelopingHandler())
-                    try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(LineDelimiterCoder()))
-                    try channel.pipeline.syncOperations.addHandler(MessageToByteHandler(LineDelimiterCoder()))
-                    try channel.pipeline.syncOperations.addHandler(ByteBufferToStringHandler())
-                    return try NIOAsyncChannel(wrappingChannelSynchronously: channel)
+        do {
+            return try await ClientBootstrap(group: eventLoopGroup)
+                .withConnectedSocket(fileDescriptor) { channel in
+                    channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandler(AddressedEnvelopingHandler())
+                        try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(LineDelimiterCoder()))
+                        try channel.pipeline.syncOperations.addHandler(MessageToByteHandler(LineDelimiterCoder()))
+                        try channel.pipeline.syncOperations.addHandler(ByteBufferToStringHandler())
+                        return try NIOAsyncChannel(wrappingChannelSynchronously: channel)
+                    }
                 }
-            }
+        } catch {
+            try? self.closePipeDescriptor(fileDescriptor)
+            throw error
+        }
     }
-    #endif
 
     private func makeClientChannelWithProtocolNegotiation(
         eventLoopGroup: EventLoopGroup,

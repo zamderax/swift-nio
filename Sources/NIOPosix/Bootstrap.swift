@@ -1,4 +1,4 @@
-﻿//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -18,12 +18,19 @@ import NIOCore
 import ucrt
 
 import func WinSDK.GetFileType
+import func WinSDK.WSAGetLastError
+import func WinSDK.WSADuplicateSocketW
+import func WinSDK.WSASocketW
+import func WinSDK.closesocket
+import func WinSDK.GetCurrentProcessId
 
 import let WinSDK.FILE_TYPE_PIPE
 import let WinSDK.INVALID_HANDLE_VALUE
+import let WinSDK.INVALID_SOCKET
 
 import struct WinSDK.DWORD
 import struct WinSDK.HANDLE
+import struct WinSDK.WSAPROTOCOL_INFOW
 #endif
 
 /// The type of all `channelInitializer` callbacks.
@@ -321,6 +328,33 @@ public final class ServerBootstrap {
             }
         }
     }
+
+#if os(Windows)
+    public func bind(to hyperVAddress: HyperVSocketAddress) -> EventLoopFuture<Channel> {
+        func makeChannel(
+            _ eventLoop: SelectableEventLoop,
+            _ childEventLoopGroup: EventLoopGroup,
+            _ enableMPTCP: Bool
+        ) throws -> ServerSocketChannel {
+            try ServerSocketChannel(
+                eventLoop: eventLoop,
+                group: childEventLoopGroup,
+                protocolFamily: .hyperV,
+                enableMPTCP: enableMPTCP
+            )
+        }
+        return bind0(makeServerChannel: makeChannel) { (eventLoop, serverChannel) in
+            serverChannel.register().flatMap {
+                let promise = eventLoop.makePromise(of: Void.self)
+                serverChannel.triggerUserOutboundEvent0(
+                    HyperVSocketChannelEvents.BindToAddress(hyperVAddress),
+                    promise: promise
+                )
+                return promise.futureResult
+            }
+        }
+    }
+#endif
 
     #if !os(Windows)
     /// Use the existing bound socket file descriptor.
@@ -651,6 +685,43 @@ extension ServerBootstrap {
             }
         }.get()
     }
+
+#if os(Windows)
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func bind<Output: Sendable>(
+        to hyperVAddress: HyperVSocketAddress,
+        serverBackPressureStrategy: NIOAsyncSequenceProducerBackPressureStrategies.HighLowWatermark? = nil,
+        childChannelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<Output>
+    ) async throws -> NIOAsyncChannel<Output, Never> {
+        func makeChannel(
+            _ eventLoop: SelectableEventLoop,
+            _ childEventLoopGroup: EventLoopGroup,
+            _ enableMPTCP: Bool
+        ) throws -> ServerSocketChannel {
+            try ServerSocketChannel(
+                eventLoop: eventLoop,
+                group: childEventLoopGroup,
+                protocolFamily: .hyperV,
+                enableMPTCP: enableMPTCP
+            )
+        }
+
+        return try await self.bind0(
+            makeServerChannel: makeChannel,
+            serverBackPressureStrategy: serverBackPressureStrategy,
+            childChannelInitializer: childChannelInitializer
+        ) { channel in
+            channel.register().flatMap {
+                let promise = channel.eventLoop.makePromise(of: Void.self)
+                channel.triggerUserOutboundEvent0(
+                    HyperVSocketChannelEvents.BindToAddress(hyperVAddress),
+                    promise: promise
+                )
+                return promise.futureResult
+            }
+        }.get()
+    }
+#endif
 
     /// Use the existing bound socket file descriptor.
     ///
@@ -1114,6 +1185,29 @@ public final class ClientBootstrap: NIOClientTCPBootstrapProtocol {
         }
     }
 
+#if os(Windows)
+    public func connect(to address: HyperVSocketAddress) -> EventLoopFuture<Channel> {
+        let connectTimeout = self.connectTimeout
+        return self.initializeAndRegisterNewChannel(
+            eventLoop: self.group.next(),
+            protocolFamily: .hyperV
+        ) { channel in
+            let connectPromise = channel.eventLoop.makePromise(of: Void.self)
+            channel.triggerUserOutboundEvent(HyperVSocketChannelEvents.ConnectToAddress(address), promise: connectPromise)
+
+            let cancelTask = channel.eventLoop.scheduleTask(in: connectTimeout) {
+                connectPromise.fail(ChannelError.connectTimeout(connectTimeout))
+                channel.close(promise: nil)
+            }
+            connectPromise.futureResult.whenComplete { (_: Result<Void, Error>) in
+                cancelTask.cancel()
+            }
+
+            return connectPromise.futureResult
+        }
+    }
+#endif
+
     #if !os(Windows)
     /// Use the existing connected socket file descriptor.
     ///
@@ -1377,6 +1471,36 @@ extension ClientBootstrap {
             return connectPromise.futureResult
         }.get().1
     }
+#if os(Windows)
+    public func connect<Output: Sendable>(
+        to address: HyperVSocketAddress,
+        channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<Output>
+    ) async throws -> Output {
+        let connectTimeout = self.connectTimeout
+        return try await self.initializeAndRegisterNewChannel(
+            eventLoop: self.group.next(),
+            protocolFamily: NIOBSDSocket.ProtocolFamily.hyperV,
+            channelInitializer: channelInitializer,
+            postRegisterTransformation: { result, eventLoop in
+                eventLoop.makeSucceededFuture(result)
+            }
+        ) { channel in
+            let connectPromise = channel.eventLoop.makePromise(of: Void.self)
+            channel.triggerUserOutboundEvent(HyperVSocketChannelEvents.ConnectToAddress(address), promise: connectPromise)
+
+            let cancelTask = channel.eventLoop.scheduleTask(in: connectTimeout) {
+                connectPromise.fail(ChannelError.connectTimeout(connectTimeout))
+                channel.close(promise: nil)
+            }
+            connectPromise.futureResult.whenComplete { (_: Result<Void, Error>) in
+                cancelTask.cancel()
+            }
+
+            return connectPromise.futureResult
+        }.get().1
+    }
+#endif
+
 
     /// Use the existing connected socket file descriptor.
     ///
@@ -2239,6 +2363,7 @@ extension DatagramBootstrap: Sendable {}
 ///                       .takingOwnershipOfDescriptors(input: STDIN_FILENO, output: STDOUT_FILENO)
 ///
 public final class NIOPipeBootstrap {
+    public typealias PipeDescriptor = NIOBSDSocket.Handle
     private let group: EventLoopGroup
     private var channelInitializer: Optional<ChannelInitializerCallback>
     @usableFromInline
@@ -2316,23 +2441,10 @@ public final class NIOPipeBootstrap {
         return self
     }
 
-    private func validateFileDescriptorIsNotAFile(_ descriptor: CInt) throws {
+    private func validateFileDescriptorIsNotAFile(_ descriptor: PipeDescriptor) throws {
         #if os(Windows)
-        // NOTE: this is a *non-owning* handle, do *NOT* call `CloseHandle`
-        let hFile: HANDLE = HANDLE(bitPattern: _get_osfhandle(descriptor))!
-        if hFile == INVALID_HANDLE_VALUE {
-            throw IOError(errnoCode: EBADF, reason: "_get_osfhandle")
-        }
-
-        // The check here is different from other platforms as the file types on
-        // Windows are different.  SOCKETs and files are different domains, and
-        // as a result we know that the descriptor is not a socket.  The only
-        // other type of file it could be is either character or disk, neither
-        // of which support the operations here.
-        switch GetFileType(hFile) {
-        case DWORD(FILE_TYPE_PIPE):
-            break
-        default:
+        let invalidSocket: NIOBSDSocket.Handle = ~NIOBSDSocket.Handle(0)
+        guard descriptor != invalidSocket else {
             throw ChannelError._operationUnsupported
         }
         #else
@@ -2349,6 +2461,28 @@ public final class NIOPipeBootstrap {
         #endif
     }
 
+    #if os(Windows)
+    private func duplicatePipeDescriptor(descriptor: PipeDescriptor) throws -> PipeDescriptor {
+        try self.validateFileDescriptorIsNotAFile(descriptor)
+        var protocolInfo = WSAPROTOCOL_INFOW()
+        guard WSADuplicateSocketW(descriptor, GetCurrentProcessId(), &protocolInfo) == 0 else {
+            throw IOError(winsock: WSAGetLastError(), reason: "WSADuplicateSocketW")
+        }
+        let duplicated = WSASocketW(
+            Int32(protocolInfo.iAddressFamily),
+            Int32(protocolInfo.iSocketType),
+            Int32(protocolInfo.iProtocol),
+            &protocolInfo,
+            0,
+            0
+        )
+        guard duplicated != INVALID_SOCKET else {
+            throw IOError(winsock: WSAGetLastError(), reason: "WSASocketW")
+        }
+        return duplicated
+    }
+    #endif
+
     /// Create the `PipeChannel` with the provided file descriptor which is used for both input & output.
     ///
     /// This method is useful for specialilsed use-cases where you want to use `NIOPipeBootstrap` for say a serial line.
@@ -2361,9 +2495,17 @@ public final class NIOPipeBootstrap {
     /// - Parameters:
     ///   - inputOutput: The _Unix file descriptor_ for the input & output.
     /// - Returns: an `EventLoopFuture<Channel>` to deliver the `Channel`.
-    public func takingOwnershipOfDescriptor(inputOutput: CInt) -> EventLoopFuture<Channel> {
+    public func takingOwnershipOfDescriptor(inputOutput: PipeDescriptor) -> EventLoopFuture<Channel> {
         #if os(Windows)
-        return self.group.next().makeFailedFuture(makeWindowsPipeUnsupportedError())
+        do {
+            let duplicate = try self.duplicatePipeDescriptor(descriptor: inputOutput)
+            return self._takingOwnershipOfDescriptors(input: inputOutput, output: duplicate).flatMapErrorThrowing { error in
+                _ = WinSDK.closesocket(duplicate)
+                throw error
+            }
+        } catch {
+            return self.group.next().makeFailedFuture(error)
+        }
         #else
         let inputFD = inputOutput
         let outputFD = try! Posix.dup(descriptor: inputOutput)
@@ -2391,7 +2533,7 @@ public final class NIOPipeBootstrap {
     ///   - input: The _Unix file descriptor_ for the input (ie. the read side).
     ///   - output: The _Unix file descriptor_ for the output (ie. the write side).
     /// - Returns: an `EventLoopFuture<Channel>` to deliver the `Channel`.
-    public func takingOwnershipOfDescriptors(input: CInt, output: CInt) -> EventLoopFuture<Channel> {
+    public func takingOwnershipOfDescriptors(input: PipeDescriptor, output: PipeDescriptor) -> EventLoopFuture<Channel> {
         self._takingOwnershipOfDescriptors(input: input, output: output)
     }
 
@@ -2408,7 +2550,7 @@ public final class NIOPipeBootstrap {
     ///   - input: The _Unix file descriptor_ for the input (ie. the read side).
     /// - Returns: an `EventLoopFuture<Channel>` to deliver the `Channel`.
     public func takingOwnershipOfDescriptor(
-        input: CInt
+        input: PipeDescriptor
     ) -> EventLoopFuture<Channel> {
         self._takingOwnershipOfDescriptors(input: input, output: nil)
     }
@@ -2426,12 +2568,12 @@ public final class NIOPipeBootstrap {
     ///   - output: The _Unix file descriptor_ for the output (ie. the write side).
     /// - Returns: an `EventLoopFuture<Channel>` to deliver the `Channel`.
     public func takingOwnershipOfDescriptor(
-        output: CInt
+        output: PipeDescriptor
     ) -> EventLoopFuture<Channel> {
         self._takingOwnershipOfDescriptors(input: nil, output: output)
     }
 
-    private func _takingOwnershipOfDescriptors(input: CInt?, output: CInt?) -> EventLoopFuture<Channel> {
+    private func _takingOwnershipOfDescriptors(input: PipeDescriptor?, output: PipeDescriptor?) -> EventLoopFuture<Channel> {
         self._takingOwnershipOfDescriptors(
             input: input,
             output: output
@@ -2441,12 +2583,12 @@ public final class NIOPipeBootstrap {
     }
 
     @available(*, deprecated, renamed: "takingOwnershipOfDescriptor(inputOutput:)")
-    public func withInputOutputDescriptor(_ fileDescriptor: CInt) -> EventLoopFuture<Channel> {
+    public func withInputOutputDescriptor(_ fileDescriptor: PipeDescriptor) -> EventLoopFuture<Channel> {
         self.takingOwnershipOfDescriptor(inputOutput: fileDescriptor)
     }
 
     @available(*, deprecated, renamed: "takingOwnershipOfDescriptors(input:output:)")
-    public func withPipes(inputDescriptor: CInt, outputDescriptor: CInt) -> EventLoopFuture<Channel> {
+    public func withPipes(inputDescriptor: PipeDescriptor, outputDescriptor: PipeDescriptor) -> EventLoopFuture<Channel> {
         self.takingOwnershipOfDescriptors(input: inputDescriptor, output: outputDescriptor)
     }
 }
@@ -2470,11 +2612,21 @@ extension NIOPipeBootstrap {
     /// - Returns: The result of the channel initializer.
     @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
     public func takingOwnershipOfDescriptor<Output: Sendable>(
-        inputOutput: CInt,
+        inputOutput: PipeDescriptor,
         channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<Output>
     ) async throws -> Output {
         #if os(Windows)
-        throw makeWindowsPipeUnsupportedError()
+        let duplicate = try self.duplicatePipeDescriptor(descriptor: inputOutput)
+        do {
+            return try await self.takingOwnershipOfDescriptors(
+                input: inputOutput,
+                output: duplicate,
+                channelInitializer: channelInitializer
+            )
+        } catch {
+            _ = WinSDK.closesocket(duplicate)
+            throw error
+        }
         #else
         let inputFD = inputOutput
         let outputFD = try! Posix.dup(descriptor: inputOutput)
@@ -2510,8 +2662,8 @@ extension NIOPipeBootstrap {
     /// - Returns: The result of the channel initializer.
     @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
     public func takingOwnershipOfDescriptors<Output: Sendable>(
-        input: CInt,
-        output: CInt,
+        input: PipeDescriptor,
+        output: PipeDescriptor,
         channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<Output>
     ) async throws -> Output {
         try await self._takingOwnershipOfDescriptors(
@@ -2537,7 +2689,7 @@ extension NIOPipeBootstrap {
     /// - Returns: The result of the channel initializer.
     @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
     public func takingOwnershipOfDescriptor<Output: Sendable>(
-        input: CInt,
+        input: PipeDescriptor,
         channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<Output>
     ) async throws -> Output {
         try await self._takingOwnershipOfDescriptors(
@@ -2563,7 +2715,7 @@ extension NIOPipeBootstrap {
     /// - Returns: The result of the channel initializer.
     @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
     public func takingOwnershipOfDescriptor<Output: Sendable>(
-        output: CInt,
+        output: PipeDescriptor,
         channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<Output>
     ) async throws -> Output {
         try await self._takingOwnershipOfDescriptors(
@@ -2575,8 +2727,8 @@ extension NIOPipeBootstrap {
 
     @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
     func _takingOwnershipOfDescriptors<ChannelInitializerResult: Sendable>(
-        input: CInt?,
-        output: CInt?,
+        input: PipeDescriptor?,
+        output: PipeDescriptor?,
         channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<ChannelInitializerResult>
     ) async throws -> ChannelInitializerResult {
         try await self._takingOwnershipOfDescriptors(
@@ -2587,12 +2739,22 @@ extension NIOPipeBootstrap {
     }
 
     func _takingOwnershipOfDescriptors<ChannelInitializerResult: Sendable>(
-        input: CInt?,
-        output: CInt?,
+        input: PipeDescriptor?,
+        output: PipeDescriptor?,
         channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<ChannelInitializerResult>
     ) -> EventLoopFuture<ChannelInitializerResult> {
         #if os(Windows)
-        return self.group.next().makeFailedFuture(makeWindowsPipeUnsupportedError())
+        precondition(!(input == nil && output == nil), "Either input or output has to be set")
+        let invalidSocket: NIOBSDSocket.Handle = ~NIOBSDSocket.Handle(0)
+        if let input {
+            precondition(input != invalidSocket, "illegal input descriptor")
+        }
+        if let output {
+            precondition(output != invalidSocket, "illegal output descriptor")
+        }
+        if let input, let output {
+            precondition(input != output, "input and output descriptors must be distinct")
+        }
         #else
         precondition(
             input ?? 0 >= 0 && output ?? 0 >= 0 && input != output,
@@ -2600,6 +2762,7 @@ extension NIOPipeBootstrap {
                 + "must be distinct and both positive integers."
         )
         precondition(!(input == nil && output == nil), "Either input or output has to be set")
+        #endif
         let eventLoop = group.next()
         let channelOptions = self._channelOptions
 
@@ -2676,9 +2839,85 @@ extension NIOPipeBootstrap {
                 setupChannel()
             }
         }
-        #endif
     }
 }
+
+#if os(Windows)
+extension NIOPipeBootstrap {
+    public static func makePipeDescriptorPair() throws -> (PipeDescriptor, PipeDescriptor) {
+        try WindowsPipeUtilities.makeStreamSocketPair()
+    }
+}
+
+private enum WindowsPipeUtilities {
+    static func makeStreamSocketPair() throws -> (NIOBSDSocket.Handle, NIOBSDSocket.Handle) {
+        func windowsIOError(_ reason: String) -> IOError {
+            IOError(winsock: WSAGetLastError(), reason: reason)
+        }
+
+        let listener = try NIOBSDSocket.socket(domain: .inet, type: .stream, protocolSubtype: .default)
+        defer {
+            try? NIOBSDSocket.close(socket: listener)
+        }
+
+        let loopbackAddress = try SocketAddress(ipAddress: "127.0.0.1", port: 0)
+        try loopbackAddress.withSockAddr { pointer, length in
+            let length: CInt = numericCast(length)
+            try NIOBSDSocket.bind(socket: listener, address: pointer, address_len: length)
+        }
+
+        try NIOBSDSocket.listen(socket: listener, backlog: 16)
+
+        var storage = sockaddr_storage()
+        var storageLength: CInt = numericCast(MemoryLayout<sockaddr_storage>.size)
+        try withUnsafeMutablePointer(to: &storage) { storagePtr in
+            try storagePtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                try NIOBSDSocket.getsockname(socket: listener, address: sockaddrPtr, address_len: &storageLength)
+            }
+        }
+        let client = try NIOBSDSocket.socket(domain: .inet, type: .stream, protocolSubtype: .default)
+        var shouldCloseClient = true
+        defer {
+            if shouldCloseClient {
+                try? NIOBSDSocket.close(socket: client)
+            }
+        }
+
+        try withUnsafePointer(to: &storage) { storagePtr in
+            try storagePtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                do {
+                    _ = try NIOBSDSocket.connect(socket: client, address: sockaddrPtr, address_len: storageLength)
+                } catch {
+                    throw windowsIOError("connect")
+                }
+            }
+        }
+
+        var acceptStorage = sockaddr_storage()
+        var acceptLength: CInt = numericCast(MemoryLayout<sockaddr_storage>.size)
+        let serverHandle = try withUnsafeMutablePointer(to: &acceptStorage) { storagePtr in
+            try storagePtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                try NIOBSDSocket.accept(socket: listener, address: sockaddrPtr, address_len: &acceptLength)
+            }
+        }
+
+        guard let server = serverHandle else {
+            throw windowsIOError("accept")
+        }
+        var shouldCloseServer = true
+        defer {
+            if shouldCloseServer {
+                try? NIOBSDSocket.close(socket: server)
+            }
+        }
+
+
+        shouldCloseClient = false
+        shouldCloseServer = false
+        return (client, server)
+    }
+}
+#endif
 
 @available(*, unavailable)
 extension NIOPipeBootstrap: Sendable {}

@@ -26,10 +26,23 @@ import let WinSDK.RelationProcessorCore
 
 import let WinSDK.AF_UNSPEC
 import let WinSDK.ERROR_SUCCESS
+import let WinSDK.AF_INET
+import let WinSDK.IPPROTO_UDP
+import let WinSDK.INVALID_SOCKET
+import let WinSDK.SOCKET_ERROR
+import let WinSDK.SOCK_DGRAM
+import let WinSDK.UDP_RECV_MAX_COALESCED_SIZE
+import let WinSDK.UDP_SEND_MSG_SIZE
+import let WinSDK.WSAEOPNOTSUPP
+import let WinSDK.WSAENOPROTOOPT
 
 import func WinSDK.GetAdaptersAddresses
 import func WinSDK.GetLastError
 import func WinSDK.GetLogicalProcessorInformation
+import func WinSDK.WSAGetLastError
+import func WinSDK.closesocket
+import func WinSDK.setsockopt
+import func WinSDK.socket
 
 import struct WinSDK.IP_ADAPTER_ADDRESSES
 import struct WinSDK.IP_ADAPTER_UNICAST_ADDRESS
@@ -37,6 +50,7 @@ import struct WinSDK.SYSTEM_LOGICAL_PROCESSOR_INFORMATION
 import struct WinSDK.ULONG
 
 import typealias WinSDK.DWORD
+import typealias WinSDK.SOCKET
 #elseif canImport(Darwin)
 import Darwin
 #elseif canImport(WASILibc)
@@ -79,7 +93,7 @@ public enum System: Sendable {
     /// of threads to use is a matter for the programmer, and can be determined based on the
     /// specific execution behaviour of the program.
     ///
-    /// On Linux the value returned will take account of cgroup or cpuset restrictions.
+    /// On Linux the value returned will take account of cgroup || cpuset restrictions.
     /// The result will be rounded up to the nearest whole number where fractional CPUs have been assigned.
     ///
     /// - Returns: The logical core count on the system.
@@ -240,24 +254,100 @@ extension System {
     ///
     /// The option can be enabled by setting the ``ChannelOptions/Types/DatagramSegmentSize`` channel option.
     public static let supportsUDPSegmentationOffload: Bool = CNIOLinux_supports_udp_segment()
-    #else
+#elseif os(Windows)
+    /// Returns true if the platform supports `UDP_SEGMENT` (GSO).
+    ///
+    /// The option can be enabled by setting the ``ChannelOptions/Types/DatagramSegmentSize`` channel option.
+    public static let supportsUDPSegmentationOffload: Bool = {
+        guard let socket = Self.makeUDPSocket() else {
+            return false
+        }
+        defer { _ = WinSDK.closesocket(socket) }
+
+        var value: UInt32 = 1200
+        let result = withUnsafeBytes(of: value) { buffer -> CInt in
+            let optPtr = buffer.bindMemory(to: CChar.self).baseAddress!
+            return WinSDK.setsockopt(
+                socket,
+                Int32(IPPROTO_UDP.rawValue),
+                Int32(UDP_SEND_MSG_SIZE),
+                optPtr,
+                Int32(buffer.count)
+            )
+        }
+        if result == SOCKET_ERROR {
+            return false
+        }
+
+        value = 0
+        _ = withUnsafeBytes(of: value) { buffer in
+            let optPtr = buffer.bindMemory(to: CChar.self).baseAddress!
+            WinSDK.setsockopt(
+                socket,
+                Int32(IPPROTO_UDP.rawValue),
+                Int32(UDP_SEND_MSG_SIZE),
+                optPtr,
+                Int32(buffer.count)
+            )
+        }
+        return true
+    }()
+#else
     /// Returns true if the platform supports `UDP_SEGMENT` (GSO).
     ///
     /// The option can be enabled by setting the ``ChannelOptions/Types/DatagramSegmentSize`` channel option.
     public static let supportsUDPSegmentationOffload: Bool = false
-    #endif
+#endif
 
-    #if os(Linux)
+#if os(Linux)
     /// Returns true if the platform supports `UDP_GRO`.
     ///
     /// The option can be enabled by setting the ``ChannelOptions/Types/DatagramReceiveOffload`` channel option.
     public static let supportsUDPReceiveOffload: Bool = CNIOLinux_supports_udp_gro()
-    #else
+#elseif os(Windows)
+    /// Returns true if the platform supports `UDP_GRO`.
+    ///
+    /// The option can be enabled by setting the ``ChannelOptions/Types/DatagramReceiveOffload`` channel option.
+    public static let supportsUDPReceiveOffload: Bool = {
+        guard let socket = Self.makeUDPSocket() else {
+            return false
+        }
+        defer { _ = WinSDK.closesocket(socket) }
+
+        var value: UInt32 = 65_535
+        let setResult = withUnsafeBytes(of: value) { buffer -> CInt in
+            let optPtr = buffer.bindMemory(to: CChar.self).baseAddress!
+            return WinSDK.setsockopt(
+                socket,
+                Int32(IPPROTO_UDP.rawValue),
+                Int32(UDP_RECV_MAX_COALESCED_SIZE),
+                optPtr,
+                Int32(buffer.count)
+            )
+        }
+        if setResult == SOCKET_ERROR {
+            return false
+        }
+
+        value = 0
+        _ = withUnsafeBytes(of: value) { buffer in
+            let optPtr = buffer.bindMemory(to: CChar.self).baseAddress!
+            WinSDK.setsockopt(
+                socket,
+                Int32(IPPROTO_UDP.rawValue),
+                Int32(UDP_RECV_MAX_COALESCED_SIZE),
+                optPtr,
+                Int32(buffer.count)
+            )
+        }
+        return true
+    }()
+#else
     /// Returns true if the platform supports `UDP_GRO`.
     ///
     /// The option can be enabled by setting the ``ChannelOptions/Types/DatagramReceiveOffload`` channel option.
     public static let supportsUDPReceiveOffload: Bool = false
-    #endif
+#endif
 
     /// Returns the UDP maximum segment count if the platform supports and defines it.
     public static var udpMaxSegments: Int? {
@@ -269,6 +359,16 @@ extension System {
         #endif
         return nil
     }
+
+#if os(Windows)
+    private static func makeUDPSocket() -> WinSDK.SOCKET? {
+        let socket = WinSDK.socket(Int32(AF_INET), Int32(SOCK_DGRAM), Int32(IPPROTO_UDP.rawValue))
+        guard socket != INVALID_SOCKET else {
+            return nil
+        }
+        return socket
+    }
+#endif
 }
 
 #if os(Windows)

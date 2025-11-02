@@ -665,11 +665,11 @@ let channel = try { () -> Channel in
         return try socketBootstrap.bind(unixDomainSocketPath: path).wait()
     case .stdio:
         #if os(Windows)
-        let standardIn = NIOStandardStreamDescriptor.stdin
-        let standardOut = NIOStandardStreamDescriptor.stdout
+        let standardIn: NIOPipeBootstrap.PipeDescriptor = numericCast(NIOStandardStreamDescriptor.stdin)
+        let standardOut: NIOPipeBootstrap.PipeDescriptor = numericCast(NIOStandardStreamDescriptor.stdout)
         #else
-        let standardIn = STDIN_FILENO
-        let standardOut = STDOUT_FILENO
+        let standardIn: NIOPipeBootstrap.PipeDescriptor = numericCast(STDIN_FILENO)
+        let standardOut: NIOPipeBootstrap.PipeDescriptor = numericCast(STDOUT_FILENO)
         #endif
         return try pipeBootstrap.takingOwnershipOfDescriptors(input: standardIn, output: standardOut).wait()
     }
