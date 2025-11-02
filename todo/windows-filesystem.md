@@ -1,8 +1,8 @@
 # Windows Support TODO
 
 ## File I/O
-- [ ] Rebuild `NIOFileHandle` functionality on Windows so `Tests/NIOPosixTests/NIOFileHandleTest.swift:8` can run.
-- [ ] Implement Windows `NonBlockingFileIO` paths to un-skip `Tests/NIOPosixTests/NonBlockingFileIOTest.swift:10`.
+- [x] Rebuild `NIOFileHandle` functionality on Windows so `Tests/NIOPosixTests/NIOFileHandleTest.swift:8` can run.
+- [x] Implement Windows `NonBlockingFileIO` paths to un-skip `Tests/NIOPosixTests/NonBlockingFileIOTest.swift:10`.
 - [ ] Enable Windows file-region support to restore `Tests/NIOPosixTests/FileRegionTest.swift:8`.
 
 ## Syscall Abstraction Layer

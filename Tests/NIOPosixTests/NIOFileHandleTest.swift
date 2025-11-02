@@ -1,14 +1,4 @@
-#if os(Windows)
-import XCTest
-
-@testable import NIOPosix
-
-final class NIOFileHandleTest: XCTestCase {
-    func testNIOFileHandleUnsupportedOnWindows() throws {
-        throw XCTSkip("NIOFileHandle tests are unsupported on Windows")
-    }
-}
-#else//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -27,6 +17,10 @@ import NIOPosix
 import XCTest
 
 @testable import NIOCore
+
+#if os(Windows)
+import ucrt
+#endif
 
 final class NIOFileHandleTest: XCTestCase {
     func testOpenCloseWorks() throws {
@@ -169,6 +163,16 @@ final class NIOFileHandleTest: XCTestCase {
     }
 
     private static func makePipe() throws -> (CInt, CInt) {
+        #if os(Windows)
+        var pipeFDs = [CInt](repeating: -1, count: 2)
+        let result = pipeFDs.withUnsafeMutableBufferPointer { ptr -> CInt in
+            _pipe(ptr.baseAddress, 4096, _O_BINARY)
+        }
+        guard result == 0 else {
+            throw POSIXError(what: "_pipe", errnoCode: currentErrno())
+        }
+        return (pipeFDs[0], pipeFDs[1])
+        #else
         var pipeFDs: [CInt] = [-1, -1]
         let err = pipeFDs.withUnsafeMutableBufferPointer { pipePtr in
             pipe(pipePtr.baseAddress!)
@@ -177,7 +181,14 @@ final class NIOFileHandleTest: XCTestCase {
             throw POSIXError(what: "pipe", errnoCode: errno)
         }
         return (pipeFDs[0], pipeFDs[1])
+        #endif
     }
 }
-#endif
 
+#if os(Windows)
+private func currentErrno() -> CInt {
+    var value: CInt = 0
+    _get_errno(&value)
+    return value
+}
+#endif

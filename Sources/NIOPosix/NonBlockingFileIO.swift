@@ -16,6 +16,11 @@ import CNIOLinux
 import CNIOWindows
 import NIOConcurrencyHelpers
 import NIOCore
+#if os(Windows)
+import Foundation
+import WinSDK
+import ucrt
+#endif
 
 /// ``NonBlockingFileIO`` is a helper that allows you to read files without blocking the calling thread.
 ///
@@ -60,6 +65,186 @@ public struct NonBlockingFileIO: Sendable {
     public init(threadPool: NIOThreadPool) {
         self.threadPool = threadPool
     }
+
+#if os(Windows)
+    private enum WindowsFileOperations {
+        private static let dtUnknown: UInt8 = 0
+        private static let dtDirectory: UInt8 = 4  // matches POSIX DT_DIR
+        private static let dtRegular: UInt8 = 8    // matches POSIX DT_REG
+        private static let dtSymlink: UInt8 = 10   // matches POSIX DT_LNK
+
+        @inline(__always)
+        private static func normalizedPath(_ path: String) -> String {
+            path.replacingOccurrences(of: "/", with: "\\")
+        }
+
+        @inline(__always)
+        private static func errnoValue() -> CInt {
+            _errno().pointee
+        }
+
+        @inline(__always)
+        private static func errno(from error: Swift.Error, default defaultErrno: CInt = EINVAL) -> CInt {
+            if let cocoa = error as? CocoaError {
+                switch cocoa.code {
+                case .fileNoSuchFile, .fileReadNoSuchFile:
+                    return ENOENT
+                case .fileWriteFileExists:
+                    return EEXIST
+                case .fileReadNoPermission, .fileWriteNoPermission:
+                    return EACCES
+                case .fileWriteUnknown, .fileReadUnknown:
+                    return EIO
+                case .fileWriteInvalidFileName:
+                    return EINVAL
+                default:
+                    break
+                }
+            }
+
+            if let posix = error as? POSIXError {
+                return CInt(posix.code.rawValue)
+            }
+
+            return defaultErrno
+        }
+
+        @inline(__always)
+        private static func withWidePath<R>(
+            _ path: String,
+            _ body: (UnsafePointer<WCHAR>) throws -> R
+        ) throws -> R {
+            try normalizedPath(path).withCString(encodedAs: UTF16.self) { pointer in
+                try body(pointer)
+            }
+        }
+
+        static func lstat(path: String) throws -> stat {
+            var raw = _stat32i64()
+            try withWidePath(path) { widePath in
+                if _wstat32i64(widePath, &raw) != 0 {
+                    throw IOError(errnoCode: errnoValue(), reason: "lstat")
+                }
+            }
+            var result = stat()
+            withUnsafeMutableBytes(of: &result) { destination in
+                withUnsafeBytes(of: raw) { source in
+                    destination.copyBytes(from: source)
+                }
+            }
+            return result
+        }
+
+        static func symlink(path: String, to destination: String) throws {
+            do {
+                try FileManager.default.createSymbolicLink(
+                    atPath: path,
+                    withDestinationPath: destination
+                )
+            } catch {
+                throw IOError(errnoCode: errno(from: error, default: EPERM), reason: "symlink")
+            }
+        }
+
+        static func readlink(path: String) throws -> String {
+            do {
+                return try FileManager.default.destinationOfSymbolicLink(atPath: path)
+            } catch {
+                throw IOError(errnoCode: errno(from: error, default: ENOENT), reason: "readlink")
+            }
+        }
+
+        static func unlink(path: String) throws {
+            do {
+                try FileManager.default.removeItem(atPath: path)
+            } catch {
+                throw IOError(errnoCode: errno(from: error, default: EPERM), reason: "unlink")
+            }
+        }
+
+        static func mkdir(path: String, mode _: NIOPOSIXFileMode) throws {
+            do {
+                try FileManager.default.createDirectory(
+                    atPath: path,
+                    withIntermediateDirectories: false,
+                    attributes: nil
+                )
+            } catch {
+                throw IOError(errnoCode: errno(from: error, default: EEXIST), reason: "mkdir")
+            }
+        }
+
+        static func createDirectory(
+            path: String,
+            withIntermediateDirectories createIntermediates: Bool,
+            mode: NIOPOSIXFileMode
+        ) throws {
+            if createIntermediates {
+                do {
+                    try FileManager.default.createDirectory(
+                        atPath: path,
+                        withIntermediateDirectories: true,
+                        attributes: nil
+                    )
+                } catch {
+                    throw IOError(errnoCode: errno(from: error, default: EIO), reason: "mkdir")
+                }
+            } else {
+                try mkdir(path: path, mode: mode)
+            }
+        }
+
+        static func listDirectory(path: String) throws -> [NIODirectoryEntry] {
+            let directory = normalizedPath(path)
+            do {
+                var entries: [NIODirectoryEntry] = [
+                    NIODirectoryEntry(ino: 0, type: dtDirectory, name: "."),
+                    NIODirectoryEntry(ino: 0, type: dtDirectory, name: ".."),
+                ]
+                let contents = try FileManager.default.contentsOfDirectory(atPath: path)
+                entries.reserveCapacity(entries.count + contents.count)
+                for name in contents {
+                    let combined = directory.hasSuffix("\\") ? directory + name : directory + "\\" + name
+                    let status = try? lstat(path: combined)
+                    let type: UInt8
+                    if let status {
+                        let mode = Int32(status.st_mode) & ucrt.S_IFMT
+                        switch mode {
+                        case ucrt.S_IFDIR:
+                            type = dtDirectory
+                        case ucrt.S_IFREG:
+                            type = dtRegular
+                        default:
+                            type = dtUnknown
+                        }
+                    } else {
+                        type = dtUnknown
+                    }
+                    entries.append(NIODirectoryEntry(ino: 0, type: type, name: name))
+                }
+                return entries
+            } catch {
+                throw IOError(errnoCode: errno(from: error, default: EIO), reason: "opendir")
+            }
+        }
+
+        static func rename(path: String, newName: String) throws {
+            do {
+                try FileManager.default.moveItem(atPath: path, toPath: newName)
+            } catch {
+                throw IOError(errnoCode: errno(from: error, default: EIO), reason: "rename")
+            }
+        }
+
+        static func remove(path: String) throws {
+            do {
+                try FileManager.default.removeItem(atPath: path)
+            } catch {
+                throw IOError(errnoCode: errno(from: error, default: EIO), reason: "remove")
+            }
+        }
+    }
+#endif
 
     /// Read a `FileRegion` in chunks of `chunkSize` bytes on ``NonBlockingFileIO``'s private thread
     /// pool which is separate from any `EventLoop` thread.
@@ -671,7 +856,93 @@ public struct NonBlockingFileIO: Sendable {
         }
     }
 
-    #if !os(Windows)
+    #if os(Windows)
+    /// Returns information about a file at `path` on a private thread pool which is separate from any `EventLoop` thread.
+    ///
+    /// - Parameters:
+    ///   - path: The path of the file to get information about.
+    ///   - eventLoop: The `EventLoop` on which the returned `EventLoopFuture` will fire.
+    /// - Returns: An `EventLoopFuture` containing file information.
+    public func lstat(path: String, eventLoop: EventLoop) -> EventLoopFuture<stat> {
+        self.threadPool.runIfActive(eventLoop: eventLoop) {
+            try WindowsFileOperations.lstat(path: path)
+        }
+    }
+
+    /// Creates a symbolic link to a  `destination` file  at `path` on a private thread pool which is separate from any `EventLoop` thread.
+    ///
+    /// - Parameters:
+    ///   - path: The path of the link.
+    ///   - destination: Target path where this link will point to.
+    ///   - eventLoop: The `EventLoop` on which the returned `EventLoopFuture` will fire.
+    /// - Returns: An `EventLoopFuture` which is fulfilled if the rename was successful or fails on error.
+    public func symlink(path: String, to destination: String, eventLoop: EventLoop) -> EventLoopFuture<Void> {
+        self.threadPool.runIfActive(eventLoop: eventLoop) {
+            try WindowsFileOperations.symlink(path: path, to: destination)
+        }
+    }
+
+    /// Returns target of the symbolic link at `path` on a private thread pool which is separate from any `EventLoop` thread.
+    ///
+    /// - Parameters:
+    ///   - path: The path of the link to read.
+    ///   - eventLoop: The `EventLoop` on which the returned `EventLoopFuture` will fire.
+    /// - Returns: An `EventLoopFuture` containing link target.
+    public func readlink(path: String, eventLoop: EventLoop) -> EventLoopFuture<String> {
+        self.threadPool.runIfActive(eventLoop: eventLoop) {
+            try WindowsFileOperations.readlink(path: path)
+        }
+    }
+
+    /// Removes symbolic link at `path` on a private thread pool which is separate from any `EventLoop` thread.
+    ///
+    /// - Parameters:
+    ///   - path: The path of the link to remove.
+    ///   - eventLoop: The `EventLoop` on which the returned `EventLoopFuture` will fire.
+    /// - Returns: An `EventLoopFuture` which is fulfilled if the rename was successful or fails on error.
+    public func unlink(path: String, eventLoop: EventLoop) -> EventLoopFuture<Void> {
+        self.threadPool.runIfActive(eventLoop: eventLoop) {
+            try WindowsFileOperations.unlink(path: path)
+        }
+    }
+
+    /// Creates directory at `path` on a private thread pool which is separate from any `EventLoop` thread.
+    public func createDirectory(
+        path: String,
+        withIntermediateDirectories createIntermediates: Bool = false,
+        mode: NIOPOSIXFileMode,
+        eventLoop: EventLoop
+    ) -> EventLoopFuture<Void> {
+        self.threadPool.runIfActive(eventLoop: eventLoop) {
+            try WindowsFileOperations.createDirectory(
+                path: path,
+                withIntermediateDirectories: createIntermediates,
+                mode: mode
+            )
+        }
+    }
+
+    /// List contents of the directory at `path` on a private thread pool which is separate from any `EventLoop` thread.
+    public func listDirectory(path: String, eventLoop: EventLoop) -> EventLoopFuture<[NIODirectoryEntry]> {
+        self.threadPool.runIfActive(eventLoop: eventLoop) {
+            try WindowsFileOperations.listDirectory(path: path)
+        }
+    }
+
+    /// Renames the file at `path` to `newName` on a private thread pool which is separate from any `EventLoop` thread.
+    public func rename(path: String, newName: String, eventLoop: EventLoop) -> EventLoopFuture<Void> {
+        self.threadPool.runIfActive(eventLoop: eventLoop) {
+            try WindowsFileOperations.rename(path: path, newName: newName)
+        }
+    }
+
+    /// Removes the file at `path` on a private thread pool which is separate from any `EventLoop` thread.
+    public func remove(path: String, eventLoop: EventLoop) -> EventLoopFuture<Void> {
+        self.threadPool.runIfActive(eventLoop: eventLoop) {
+            try WindowsFileOperations.remove(path: path)
+        }
+    }
+    #else
     /// Returns information about a file at `path` on a private thread pool which is separate from any `EventLoop` thread.
     ///
     /// - Note: If `path` is a symlink, information about the link, not the file it points to.
@@ -880,6 +1151,19 @@ public struct NIODirectoryEntry: Hashable, Sendable {
     public var name: String
 
     public init(ino: UInt64, type: UInt8, name: String) {
+        self.ino = ino
+        self.type = type
+        self.name = name
+    }
+}
+#else
+/// A `NIODirectoryEntry` represents a single directory entry.
+public struct NIODirectoryEntry: Hashable, Sendable {
+    public var ino: UInt64
+    public var type: UInt8
+    public var name: String
+
+    public init(ino: UInt64 = 0, type: UInt8 = 0, name: String) {
         self.ino = ino
         self.type = type
         self.name = name
@@ -1178,6 +1462,74 @@ extension NonBlockingFileIO {
         return result
     }
 
+    #if os(Windows)
+
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func lstat(path: String) async throws -> stat {
+        try await self.threadPool.runIfActive {
+            try WindowsFileOperations.lstat(path: path)
+        }
+    }
+
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func symlink(path: String, to destination: String) async throws {
+        try await self.threadPool.runIfActive {
+            try WindowsFileOperations.symlink(path: path, to: destination)
+        }
+    }
+
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func readlink(path: String) async throws -> String {
+        try await self.threadPool.runIfActive {
+            try WindowsFileOperations.readlink(path: path)
+        }
+    }
+
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func unlink(path: String) async throws {
+        try await self.threadPool.runIfActive {
+            try WindowsFileOperations.unlink(path: path)
+        }
+    }
+
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func createDirectory(
+        path: String,
+        withIntermediateDirectories createIntermediates: Bool = false,
+        mode: NIOPOSIXFileMode
+    ) async throws {
+        try await self.threadPool.runIfActive {
+            try WindowsFileOperations.createDirectory(
+                path: path,
+                withIntermediateDirectories: createIntermediates,
+                mode: mode
+            )
+        }
+    }
+
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func listDirectory(path: String) async throws -> [NIODirectoryEntry] {
+        try await self.threadPool.runIfActive {
+            try WindowsFileOperations.listDirectory(path: path)
+        }
+    }
+
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func rename(path: String, newName: String) async throws {
+        try await self.threadPool.runIfActive {
+            try WindowsFileOperations.rename(path: path, newName: newName)
+        }
+    }
+
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public func remove(path: String) async throws {
+        try await self.threadPool.runIfActive {
+            try WindowsFileOperations.remove(path: path)
+        }
+    }
+
+    #else
+
     #if !os(Windows)
 
     /// Returns information about a file at `path` on a private thread pool.
@@ -1313,5 +1665,7 @@ extension NonBlockingFileIO {
             try Posix.remove(pathname: path)
         }
     }
+    #endif
+
     #endif
 }
