@@ -1,14 +1,4 @@
-#if os(Windows)
-import XCTest
-
-@testable import NIOPosix
-
-final class SyscallAbstractionLayerTest: XCTestCase {
-    func testSyscallAbstractionLayerUnsupportedOnWindows() throws {
-        throw XCTSkip("Syscall abstraction layer tests are unsupported on Windows")
-    }
-}
-#else//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -58,10 +48,15 @@ final class SyscallAbstractionLayerTest: XCTestCase {
 // - HookedSocket isn't Sendable but is transferred between the EventLoop and
 //   the calling thread in an UnsafeTransfer.
 
-import CNIOLinux
 import NIOConcurrencyHelpers
 import NIOCore
 import XCTest
+
+#if os(Windows)
+typealias SALDescriptor = NIOBSDSocket.Handle
+#else
+typealias SALDescriptor = CInt
+#endif
 
 @testable import NIOPosix
 
@@ -183,19 +178,19 @@ enum UserToKernel {
     case remoteAddress
     case connect(SocketAddress)
     case read(Int)
-    case close(CInt)
+    case close(SALDescriptor)
     case register(Selectable, SelectorEventSet, NIORegistration)
     case reregister(Selectable, SelectorEventSet)
     case deregister(Selectable)
     case whenReady(SelectorStrategy)
-    case disableSIGPIPE(CInt)
-    case write(CInt, ByteBuffer)
-    case writev(CInt, [ByteBuffer])
+    case disableSIGPIPE(SALDescriptor)
+    case write(SALDescriptor, ByteBuffer)
+    case writev(SALDescriptor, [ByteBuffer])
     case bind(SocketAddress)
     case getOption(NIOBSDSocket.OptionLevel, NIOBSDSocket.Option)
     case setOption(NIOBSDSocket.OptionLevel, NIOBSDSocket.Option, Any)
-    case listen(CInt, CInt)
-    case accept(CInt, Bool)
+    case listen(SALDescriptor, CInt)
+    case accept(SALDescriptor, Bool)
 }
 
 enum KernelToUser {
@@ -343,7 +338,8 @@ class HookedServerSocket: ServerSocket, UserKernelInterface {
 
     override func ignoreSIGPIPE() throws {
         try self.withUnsafeHandle { fd in
-            try self.userToKernel.waitForEmptyAndSet(.disableSIGPIPE(fd))
+            let descriptor: SALDescriptor = numericCast(fd)
+            try self.userToKernel.waitForEmptyAndSet(.disableSIGPIPE(descriptor))
             let ret = try self.waitForKernelReturn()
             if case .returnVoid = ret {
                 return
@@ -385,7 +381,8 @@ class HookedServerSocket: ServerSocket, UserKernelInterface {
 
     override func listen(backlog: Int32 = 128) throws {
         try self.withUnsafeHandle { fd in
-            try self.userToKernel.waitForEmptyAndSet(.listen(fd, backlog))
+            let descriptor: SALDescriptor = numericCast(fd)
+            try self.userToKernel.waitForEmptyAndSet(.listen(descriptor, backlog))
             let ret = try self.waitForKernelReturn()
             if case .returnVoid = ret {
                 return
@@ -397,7 +394,8 @@ class HookedServerSocket: ServerSocket, UserKernelInterface {
 
     override func accept(setNonBlocking: Bool = false) throws -> Socket? {
         try self.withUnsafeHandle { fd in
-            try self.userToKernel.waitForEmptyAndSet(.accept(fd, setNonBlocking))
+            let descriptor: SALDescriptor = numericCast(fd)
+            try self.userToKernel.waitForEmptyAndSet(.accept(descriptor, setNonBlocking))
             let ret = try self.waitForKernelReturn()
             switch ret {
             case .returnSocket(let socket):
@@ -412,8 +410,9 @@ class HookedServerSocket: ServerSocket, UserKernelInterface {
 
     override func close() throws {
         let fd = try self.takeDescriptorOwnership()
+        let descriptor: SALDescriptor = numericCast(fd)
 
-        try self.userToKernel.waitForEmptyAndSet(.close(fd))
+        try self.userToKernel.waitForEmptyAndSet(.close(descriptor))
         let ret = try self.waitForKernelReturn()
         if case .returnVoid = ret {
             return
@@ -439,7 +438,8 @@ final class HookedSocket: Socket, UserKernelInterface {
 
     override func ignoreSIGPIPE() throws {
         try self.withUnsafeHandle { fd in
-            try self.userToKernel.waitForEmptyAndSet(.disableSIGPIPE(fd))
+            let descriptor: SALDescriptor = numericCast(fd)
+            try self.userToKernel.waitForEmptyAndSet(.disableSIGPIPE(descriptor))
             let ret = try self.waitForKernelReturn()
             if case .returnVoid = ret {
                 return
@@ -493,9 +493,10 @@ final class HookedSocket: Socket, UserKernelInterface {
 
     override func write(pointer: UnsafeRawBufferPointer) throws -> IOResult<Int> {
         try self.withUnsafeHandle { fd in
+            let descriptor: SALDescriptor = numericCast(fd)
             var buffer = ByteBufferAllocator().buffer(capacity: pointer.count)
             buffer.writeBytes(pointer)
-            try self.userToKernel.waitForEmptyAndSet(.write(fd, buffer))
+            try self.userToKernel.waitForEmptyAndSet(.write(descriptor, buffer))
             let ret = try self.waitForKernelReturn()
             if case .returnIOResultInt(let result) = ret {
                 return result
@@ -507,18 +508,20 @@ final class HookedSocket: Socket, UserKernelInterface {
 
     override func writev(iovecs: UnsafeBufferPointer<IOVector>) throws -> IOResult<Int> {
         try self.withUnsafeHandle { fd in
+            let descriptor: SALDescriptor = numericCast(fd)
             let buffers = iovecs.map { iovec -> ByteBuffer in
                 #if os(Android)
                 var buffer = ByteBufferAllocator().buffer(capacity: Int(iovec.iov_len))
                 buffer.writeBytes(UnsafeRawBufferPointer(start: iovec.iov_base, count: Int(iovec.iov_len)))
                 #else
-                var buffer = ByteBufferAllocator().buffer(capacity: iovec.iov_len)
-                buffer.writeBytes(UnsafeRawBufferPointer(start: iovec.iov_base, count: iovec.iov_len))
+                let length: Int = numericCast(iovec.iov_len)
+                var buffer = ByteBufferAllocator().buffer(capacity: length)
+                buffer.writeBytes(UnsafeRawBufferPointer(start: iovec.iov_base, count: length))
                 #endif
                 return buffer
             }
 
-            try self.userToKernel.waitForEmptyAndSet(.writev(fd, buffers))
+            try self.userToKernel.waitForEmptyAndSet(.writev(descriptor, buffers))
             let ret = try self.waitForKernelReturn()
             if case .returnIOResultInt(let result) = ret {
                 return result
@@ -530,8 +533,9 @@ final class HookedSocket: Socket, UserKernelInterface {
 
     override func close() throws {
         let fd = try self.takeDescriptorOwnership()
+        let descriptor: SALDescriptor = numericCast(fd)
 
-        try self.userToKernel.waitForEmptyAndSet(.close(fd))
+        try self.userToKernel.waitForEmptyAndSet(.close(descriptor))
         let ret = try self.waitForKernelReturn()
         if case .returnVoid = ret {
             return
@@ -846,7 +850,7 @@ struct SyscallAssertions: @unchecked Sendable {
     }
 
     func assertdisableSIGPIPE(
-        expectedFD: CInt,
+        expectedFD: SALDescriptor,
         result: Result<Void, IOError>,
         file: StaticString = #filePath,
         line: UInt = #line
@@ -928,7 +932,7 @@ struct SyscallAssertions: @unchecked Sendable {
         }
     }
 
-    func assertClose(expectedFD: CInt, file: StaticString = #filePath, line: UInt = #line) throws {
+    func assertClose(expectedFD: SALDescriptor, file: StaticString = #filePath, line: UInt = #line) throws {
         SAL.printIfDebug("\(#function)")
         try self.selector.assertSyscallAndReturn(.returnVoid, file: (file), line: line) { syscall in
             if case .close(let fd) = syscall {
@@ -1020,7 +1024,7 @@ struct SyscallAssertions: @unchecked Sendable {
     }
 
     func assertWrite(
-        expectedFD: CInt,
+        expectedFD: SALDescriptor,
         expectedBytes: ByteBuffer,
         return: IOResult<Int>,
         file: StaticString = #filePath,
@@ -1037,7 +1041,7 @@ struct SyscallAssertions: @unchecked Sendable {
     }
 
     func assertWritev(
-        expectedFD: CInt,
+        expectedFD: SALDescriptor,
         expectedBytes: [ByteBuffer],
         return: IOResult<Int>,
         file: StaticString = #filePath,
@@ -1054,7 +1058,7 @@ struct SyscallAssertions: @unchecked Sendable {
     }
 
     func assertRead(
-        expectedFD: CInt,
+        expectedFD: SALDescriptor,
         expectedBufferSpace: Int,
         return: ByteBuffer,
         file: StaticString = #filePath,
@@ -1076,7 +1080,7 @@ struct SyscallAssertions: @unchecked Sendable {
     }
 
     func assertListen(
-        expectedFD: CInt,
+        expectedFD: SALDescriptor,
         expectedBacklog: CInt,
         file: StaticString = #filePath,
         line: UInt = #line
@@ -1098,7 +1102,7 @@ struct SyscallAssertions: @unchecked Sendable {
     }
 
     func assertAccept(
-        expectedFD: CInt,
+        expectedFD: SALDescriptor,
         expectedNonBlocking: Bool,
         return: Socket?,
         file: StaticString = #filePath,
@@ -1121,7 +1125,7 @@ struct SyscallAssertions: @unchecked Sendable {
     }
 
     func assertAccept(
-        expectedFD: CInt,
+        expectedFD: SALDescriptor,
         expectedNonBlocking: Bool,
         throwing error: Error,
         file: StaticString = #filePath,
@@ -1156,6 +1160,4 @@ struct SyscallAssertions: @unchecked Sendable {
         try self.selector.assertParkedRightNow(file: file, line: line)
     }
 }
-
-#endif
 

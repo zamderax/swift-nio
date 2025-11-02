@@ -1,14 +1,4 @@
-#if os(Windows)
-import XCTest
-
-@testable import NIOPosix
-
-struct SALContext {}
-
-func withSALContext<T>(_ body: (SALContext) throws -> T) throws -> T {
-    throw XCTSkip("SAL context unsupported on Windows")
-}
-#else//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -177,5 +167,4 @@ func withSALContext<R>(body: (SALContext) throws -> R) throws -> R {
     let result = try body(context)
     return result
 }
-#endif
 

@@ -2,7 +2,7 @@
 //
 // This source file is part of the SwiftNIO open source project
 //
-// Copyright (c) 2017-2021 Apple Inc. and the SwiftNIO project authors
+// Copyright (c) 2017-2024 Apple Inc. and the SwiftNIO project authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
@@ -12,10 +12,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+import Dispatch
 import Foundation
 
 #if os(Windows)
-import XCTest
+import WinSDK
+import ucrt
+#endif
 
 #if !RUNNING_INTEGRATION_TESTS
 @testable import NIOPosix
@@ -25,26 +28,6 @@ enum TestError: Error {
     case writeFailed
     case wouldBlock
 }
-
-public func measureRunTime(_ body: () throws -> Int) rethrows -> TimeInterval {
-    _ = try body()
-    return 0
-}
-
-public func measureRunTimeAndPrint(desc: String, body: () throws -> Int) rethrows {
-    _ = try measureRunTime(body)
-}
-
-func runSystemCallWrapperPerformanceTest(
-    testAssertFunction: (@autoclosure () -> Bool, @autoclosure () -> String, StaticString, UInt) -> Void,
-    debugModeAllowed: Bool
-) throws {
-    throw XCTSkip("System call wrapper performance helpers are unsupported on Windows")
-}
-#else
-#if !RUNNING_INTEGRATION_TESTS
-@testable import NIOPosix
-#endif
 
 public func measureRunTime(_ body: () throws -> Int) rethrows -> TimeInterval {
     func measureOne(_ body: () throws -> Int) rethrows -> TimeInterval {
@@ -60,7 +43,6 @@ public func measureRunTime(_ body: () throws -> Int) rethrows -> TimeInterval {
         measurements[i] = try measureOne(body)
     }
 
-    //return measurements.reduce(0, +) / 10.0
     return measurements.min()!
 }
 
@@ -69,9 +51,44 @@ public func measureRunTimeAndPrint(desc: String, body: () throws -> Int) rethrow
     print("\(try measureRunTime(body))s")
 }
 
-enum TestError: Error {
-    case writeFailed
-    case wouldBlock
+#if os(Windows)
+private let nullDeviceName = "NUL"
+#else
+private let nullDeviceName = "/dev/null"
+#endif
+
+@inline(__always)
+private func openNullDevice() -> CInt {
+#if os(Windows)
+    var fd: CInt = -1
+    let result = nullDeviceName.withCString { ptr in
+        _sopen_s(&fd, ptr, _O_WRONLY, _SH_DENYNO, 0)
+    }
+    if result != 0 {
+        return -1
+    }
+    return fd
+#else
+    return open(nullDeviceName, O_WRONLY)
+#endif
+}
+
+@inline(__always)
+private func closeDescriptor(_ fd: CInt) {
+#if os(Windows)
+    _ = _close(fd)
+#else
+    _ = close(fd)
+#endif
+}
+
+@inline(__always)
+private func rawWrite(descriptor: CInt, pointer: UnsafePointer<UInt8>?, count: Int) -> Int {
+#if os(Windows)
+    return Int(_write(descriptor, pointer, CUnsignedInt(count)))
+#else
+    return write(descriptor, pointer, count)
+#endif
 }
 
 func runStandalone() {
@@ -96,10 +113,10 @@ func runSystemCallWrapperPerformanceTest(
     testAssertFunction: (@autoclosure () -> Bool, @autoclosure () -> String, StaticString, UInt) -> Void,
     debugModeAllowed: Bool
 ) throws {
-    let fd = open("/dev/null", O_WRONLY)
-    precondition(fd >= 0, "couldn't open /dev/null (\(errno))")
+    let fd = openNullDevice()
+    precondition(fd >= 0, "couldn't open \(nullDeviceName) (\(NIOPosix.errno))")
     defer {
-        close(fd)
+        closeDescriptor(fd)
     }
 
     let isDebugMode = _isDebugAssertConfiguration()
@@ -115,9 +132,9 @@ func runSystemCallWrapperPerformanceTest(
         var preventCompilerOptimisation: Int = 0
         for _ in 0..<iterations {
             while true {
-                let r = write(fd, pointer, 0)
-                if r < 0 {
-                    let saveErrno = errno
+                let result = rawWrite(descriptor: fd, pointer: pointer, count: 0)
+                if result < 0 {
+                    let saveErrno = NIOPosix.errno
                     switch saveErrno {
                     case EINTR:
                         continue
@@ -129,7 +146,7 @@ func runSystemCallWrapperPerformanceTest(
                         throw TestError.writeFailed
                     }
                 } else {
-                    preventCompilerOptimisation += r
+                    preventCompilerOptimisation += result
                     break
                 }
             }
@@ -141,8 +158,8 @@ func runSystemCallWrapperPerformanceTest(
         var preventCompilerOptimisation: Int = 0
         for _ in 0..<iterations {
             switch try Posix.write(descriptor: fd, pointer: pointer, size: 0) {
-            case .processed(let v):
-                preventCompilerOptimisation += v
+            case .processed(let value):
+                preventCompilerOptimisation += value
             case .wouldBlock:
                 throw TestError.wouldBlock
             }
@@ -159,11 +176,8 @@ func runSystemCallWrapperPerformanceTest(
     }
     testAssertFunction(
         directCallTime * (1.0 + Double(allowedOverheadPercent) / 100) > withSystemCallWrappersTime,
-        "Posix wrapper adds more than \(allowedOverheadPercent)% overhead (with wrapper: \(withSystemCallWrappersTime), without: \(directCallTime)",
+        "Posix wrapper adds more than \(allowedOverheadPercent)% overhead (with wrapper: \(withSystemCallWrappersTime), without: \(directCallTime))",
         #filePath,
         #line
     )
 }
-#endif
-
-

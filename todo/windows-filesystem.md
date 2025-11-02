@@ -6,9 +6,9 @@
 - [x] Enable Windows file-region support to restore `Tests/NIOPosixTests/FileRegionTest.swift:8`.
 
 ## Syscall Abstraction Layer
-- [ ] Provide a Windows backend for the SAL event loop and channels (`Tests/NIOPosixTests/SALEventLoopTests.swift:8`, `SALChannelTests.swift:8`).
-- [ ] Implement the Windows SAL context wrappers referenced by `Tests/NIOPosixTests/SyscallAbstractionLayer.swift:8` and `SyscallAbstractionLayerContext.swift:9`.
-- [ ] Port the system-call performance helpers in `Tests/NIOPosixTests/SystemTest.swift:6` and `SystemCallWrapperHelpers.swift:8`.
+- [x] Provide a Windows backend for the SAL event loop and channels (`Tests/NIOPosixTests/SALEventLoopTests.swift:8`, `SALChannelTests.swift:8`).
+- [x] Implement the Windows SAL context wrappers referenced by `Tests/NIOPosixTests/SyscallAbstractionLayer.swift:8` and `SyscallAbstractionLayerContext.swift:9`.
+- [x] Port the system-call performance helpers in `Tests/NIOPosixTests/SystemTest.swift:6` and `SystemCallWrapperHelpers.swift:8`.
 
 ## Socket Options & Event Loop Behaviours
 - [ ] Support the single-thread bootstrap options used in `Tests/NIOPosixTests/EventLoopTest.swift:1447`.

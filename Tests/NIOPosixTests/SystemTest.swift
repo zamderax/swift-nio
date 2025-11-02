@@ -1,16 +1,8 @@
-#if os(Windows)
-import XCTest
-
-final class SystemTest: XCTestCase {
-    func testWindowsNotSupported() throws {
-        throw XCTSkip("System control message tests unsupported on Windows")
-    }
-}
-#else//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
-// Copyright (c) 2017-2021 Apple Inc. and the SwiftNIO project authors
+// Copyright (c) 2017-2024 Apple Inc. and the SwiftNIO project authors
 // Licensed under Apache License v2.0
 //
 // See LICENSE.txt for license information
@@ -20,13 +12,25 @@ final class SystemTest: XCTestCase {
 //
 //===----------------------------------------------------------------------===//
 
-import CNIOLinux
 import NIOCore
 import XCTest
 
+#if os(Windows)
+import CNIOWindows
+import WinSDK
+#elseif canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(Bionic)
+import Bionic
+#endif
+
 @testable import NIOPosix
 
-class SystemTest: XCTestCase {
+final class SystemTest: XCTestCase {
     func testSystemCallWrapperPerformance() throws {
         try runSystemCallWrapperPerformanceTest(
             testAssertFunction: XCTAssert,
@@ -39,9 +43,10 @@ class SystemTest: XCTestCase {
             var randomBytes: UInt8 = 42
             do {
                 _ = try withUnsafePointer(to: &randomBytes) { ptr in
-                    try readFD.withUnsafeFileDescriptor { readFD in
+                    try readFD.withUnsafeFileDescriptor { descriptor in
+                        let socketHandle: NIOBSDSocket.Handle = numericCast(descriptor)
                         try NIOBSDSocket.setsockopt(
-                            socket: readFD,
+                            socket: socketHandle,
                             level: NIOBSDSocket.OptionLevel(rawValue: -1),
                             option_name: NIOBSDSocket.Option(rawValue: -1),
                             option_value: ptr,
@@ -50,147 +55,154 @@ class SystemTest: XCTestCase {
                     }
                 }
                 XCTFail("success even though the call was invalid")
-            } catch let e as IOError {
-                // ENOTSOCK almost everything and ENOPROTOOPT in Qemu
-                XCTAssert([ENOTSOCK, ENOPROTOOPT].contains(e.errnoCode))
-                XCTAssert(e.description.contains("setsockopt"))
-                XCTAssert(e.description.contains("\(ENOTSOCK)") || e.description.contains("\(ENOPROTOOPT)"))
-            } catch let e {
-                XCTFail("wrong error thrown: \(e)")
+            } catch let error as IOError {
+                #if os(Windows)
+                if let winsockCode = error.winsockCode {
+                    let expected: Set<CInt> = [WinSDK.WSAENOTSOCK, WinSDK.WSAENOPROTOOPT]
+                    XCTAssertTrue(expected.contains(winsockCode), "unexpected winsock error: \(winsockCode)")
+                } else if let errnoCode = error.windowsCode {
+                    XCTFail("unexpected Windows system error: \(errnoCode)")
+                } else {
+                    XCTFail("unexpected error domain: \(error)")
+                }
+                #else
+                XCTAssert(
+                    [ENOTSOCK, ENOPROTOOPT].contains(error.errnoCode),
+                    "unexpected errno: \(error.errnoCode)"
+                )
+                #endif
+                XCTAssert(error.description.contains("setsockopt"))
+            } catch {
+                XCTFail("wrong error thrown: \(error)")
             }
             return [readFD, writeFD]
         }
     }
 
-    #if canImport(Darwin)
-    // Example twin data options captured on macOS
-    private static let cmsghdrExample: [UInt8] = [
-        0x10, 0x00, 0x00, 0x00,  // Length 16 including header
-        0x00, 0x00, 0x00, 0x00,  // IPPROTO_IP
-        0x07, 0x00, 0x00, 0x00,  // IP_RECVDSTADDR
-        0x7F, 0x00, 0x00, 0x01,  // 127.0.0.1
-        0x0D, 0x00, 0x00, 0x00,  // Length 13 including header
-        0x00, 0x00, 0x00, 0x00,  // IPPROTO_IP
-        0x1B, 0x00, 0x00, 0x00,  // IP_RECVTOS
-        0x01, 0x00, 0x00, 0x00,
-    ]  // ECT-1 (1 byte)
-    private static let cmsghdr_secondStartPosition = 16
-    private static let cmsghdr_firstDataStart = 12
-    private static let cmsghdr_firstDataCount = 4
-    private static let cmsghdr_secondDataCount = 1
-    private static let cmsghdr_firstType = IP_RECVDSTADDR
-    private static let cmsghdr_secondType = IP_RECVTOS
-    #elseif os(Android) && arch(arm)
-    private static let cmsghdrExample: [UInt8] = [
-        0x10, 0x00, 0x00, 0x00,  // Length 16 including header
-        0x00, 0x00, 0x00, 0x00,  // IPPROTO_IP
-        0x08, 0x00, 0x00, 0x00,  // IP_PKTINFO
-        0x7F, 0x00, 0x00, 0x01,  // 127.0.0.1
-        0x0D, 0x00, 0x00, 0x00,  // Length 13 including header
-        0x00, 0x00, 0x00, 0x00,  // IPPROTO_IP
-        0x01, 0x00, 0x00, 0x00,  // IP_TOS
-        0x01, 0x00, 0x00, 0x00,
-    ]  // ECT-1 (1 byte)
-    private static let cmsghdr_secondStartPosition = 16
-    private static let cmsghdr_firstDataStart = 12
-    private static let cmsghdr_firstDataCount = 4
-    private static let cmsghdr_secondDataCount = 1
-    private static let cmsghdr_firstType = IP_PKTINFO
-    private static let cmsghdr_secondType = IP_TOS
-    #elseif os(Linux) || os(Android)
-    // Example twin data options captured on Linux
-    private static let cmsghdrExample: [UInt8] = [
-        0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Length 28 including header.
-        0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,  // IPPROTO_IP,Â IP_PKTINFO
-        0x01, 0x00, 0x00, 0x00, 0x7F, 0x00, 0x00, 0x01,  // interface number, 127.0.0.1 (local)
-        0x7F, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,  // 127.0.0.1 (destination), 4 bytes to align length
-        0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Length 17
-        0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,  // IPPROTO_IP, IP_TOS
-        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // ECT-1 (1 byte)
-    ]
-    private static let cmsghdr_secondStartPosition = 32
-    private static let cmsghdr_firstDataStart = 16
-    private static let cmsghdr_firstDataCount = 12
-    private static let cmsghdr_secondDataCount = 1
-    private static let cmsghdr_firstType = IP_PKTINFO
-    private static let cmsghdr_secondType = IP_TOS
-    #else
-    #error("No cmsg support on this platform.")
-    #endif
-
-    func testCmsgFirstHeader() {
-        var exampleCmsgHdr = SystemTest.cmsghdrExample
-        exampleCmsgHdr.withUnsafeMutableBytes { pCmsgHdr in
-            var msgHdr = msghdr()
-            msgHdr.control_ptr = pCmsgHdr
-
-            withUnsafePointer(to: msgHdr) { pMsgHdr in
-                let result = NIOBSDSocketControlMessage.firstHeader(inside: pMsgHdr)
-                XCTAssertEqual(pCmsgHdr.baseAddress, result)
-            }
-        }
-    }
-
-    func testCMsgNextHeader() {
-        var exampleCmsgHdr = SystemTest.cmsghdrExample
-        exampleCmsgHdr.withUnsafeMutableBytes { pCmsgHdr in
-            var msgHdr = msghdr()
-            msgHdr.control_ptr = pCmsgHdr
-
-            withUnsafeMutablePointer(to: &msgHdr) { pMsgHdr in
-                let first = NIOBSDSocketControlMessage.firstHeader(inside: pMsgHdr)
-                let second = NIOBSDSocketControlMessage.nextHeader(inside: pMsgHdr, after: first!)
-                let expectedSecondStart = pCmsgHdr.baseAddress! + SystemTest.cmsghdr_secondStartPosition
-                XCTAssertEqual(expectedSecondStart, second!)
-                let third = NIOBSDSocketControlMessage.nextHeader(inside: pMsgHdr, after: second!)
-                XCTAssertEqual(third, nil)
-            }
-        }
-    }
-
-    func testCMsgData() {
-        var exampleCmsgHrd = SystemTest.cmsghdrExample
-        exampleCmsgHrd.withUnsafeMutableBytes { pCmsgHdr in
-            var msgHdr = msghdr()
-            msgHdr.control_ptr = pCmsgHdr
-
-            withUnsafePointer(to: msgHdr) { pMsgHdr in
-                let first = NIOBSDSocketControlMessage.firstHeader(inside: pMsgHdr)
-                let firstData = NIOBSDSocketControlMessage.data(for: first!)
-                let expecedFirstData = UnsafeRawBufferPointer(
-                    rebasing: pCmsgHdr[
-                        SystemTest
-                            .cmsghdr_firstDataStart..<(SystemTest.cmsghdr_firstDataStart
-                            + SystemTest.cmsghdr_firstDataCount)
-                    ]
-                )
-                XCTAssertEqual(expecedFirstData.baseAddress, firstData?.baseAddress)
-                XCTAssertEqual(expecedFirstData.count, firstData?.count)
-            }
-        }
-    }
-
-    func testCMsgCollection() {
-        var exampleCmsgHrd = SystemTest.cmsghdrExample
-        exampleCmsgHrd.withUnsafeMutableBytes { pCmsgHdr in
-            var msgHdr = msghdr()
-            msgHdr.control_ptr = pCmsgHdr
-            let collection = UnsafeControlMessageCollection(messageHeader: msgHdr)
-            var msgNum = 0
-            for cmsg in collection {
-                if msgNum == 0 {
-                    XCTAssertEqual(cmsg.level, .init(IPPROTO_IP))
-                    XCTAssertEqual(cmsg.type, .init(SystemTest.cmsghdr_firstType))
-                    XCTAssertEqual(cmsg.data?.count, SystemTest.cmsghdr_firstDataCount)
-                } else if msgNum == 1 {
-                    XCTAssertEqual(cmsg.level, .init(IPPROTO_IP))
-                    XCTAssertEqual(cmsg.type, .init(SystemTest.cmsghdr_secondType))
-                    XCTAssertEqual(cmsg.data?.count, SystemTest.cmsghdr_secondDataCount)
+    func testCmsgFirstHeader() throws {
+        withEncodedControlMessages(sampleControlMessages) { _, header in
+            withUnsafeMutablePointer(to: &header) { pointer in
+                guard let first = NIOBSDSocketControlMessage.firstHeader(inside: pointer) else {
+                    return XCTFail("expected first header")
                 }
-                msgNum += 1
+                XCTAssertEqual(first.pointee.cmsg_level, sampleControlMessages[0].level)
+                XCTAssertEqual(first.pointee.cmsg_type, sampleControlMessages[0].type)
+                guard let firstData = NIOBSDSocketControlMessage.data(for: first) else {
+                    return XCTFail("missing control message payload")
+                }
+                XCTAssertEqual(firstData.count, MemoryLayout<CInt>.size)
+                XCTAssertEqual(
+                    ControlMessageParser._readCInt(data: UnsafeRawBufferPointer(firstData)),
+                    sampleControlMessages[0].payload
+                )
             }
-            XCTAssertEqual(msgNum, 2)
+        }
+    }
+
+    func testCMsgNextHeader() throws {
+        withEncodedControlMessages(sampleControlMessages) { _, header in
+            withUnsafeMutablePointer(to: &header) { pointer in
+                guard let first = NIOBSDSocketControlMessage.firstHeader(inside: pointer) else {
+                    return XCTFail("expected first header")
+                }
+                guard let second = NIOBSDSocketControlMessage.nextHeader(inside: pointer, after: first) else {
+                    return XCTFail("expected second header")
+                }
+                XCTAssertEqual(second.pointee.cmsg_level, sampleControlMessages[1].level)
+                XCTAssertEqual(second.pointee.cmsg_type, sampleControlMessages[1].type)
+                guard let payload = NIOBSDSocketControlMessage.data(for: second) else {
+                    return XCTFail("missing control message payload")
+                }
+                XCTAssertEqual(payload.count, MemoryLayout<CInt>.size)
+                XCTAssertEqual(
+                    ControlMessageParser._readCInt(data: UnsafeRawBufferPointer(payload)),
+                    sampleControlMessages[1].payload
+                )
+                XCTAssertNil(NIOBSDSocketControlMessage.nextHeader(inside: pointer, after: second))
+            }
+        }
+    }
+
+    func testCMsgData() throws {
+        withEncodedControlMessages(sampleControlMessages) { _, header in
+            let collection = UnsafeControlMessageCollection(messageHeader: header)
+            XCTAssertEqual(collection.count, sampleControlMessages.count)
+            for (index, message) in collection.enumerated() {
+                let expected = sampleControlMessages[index]
+                XCTAssertEqual(message.level, expected.level)
+                XCTAssertEqual(message.type, expected.type)
+                guard let data = message.data else {
+                    return XCTFail("missing payload at index \(index)")
+                }
+                XCTAssertEqual(data.count, MemoryLayout<CInt>.size)
+                XCTAssertEqual(ControlMessageParser._readCInt(data: data), expected.payload)
+            }
+        }
+    }
+
+    func testCMsgCollection() throws {
+        withEncodedControlMessages(sampleControlMessages) { _, header in
+            let collection = UnsafeControlMessageCollection(messageHeader: header)
+            XCTAssertEqual(collection.count, sampleControlMessages.count)
+            var iterator = collection.makeIterator()
+            XCTAssertNotNil(iterator.next())
+            XCTAssertNotNil(iterator.next())
+            XCTAssertNil(iterator.next())
         }
     }
 }
+
+private struct ControlMessageExample {
+    var level: CInt
+    var type: CInt
+    var payload: CInt
+}
+
+// Simple set of control messages used across the tests.
+private let sampleControlMessages: [ControlMessageExample] = [
+    ControlMessageExample(level: 1, type: 2, payload: 3),
+    ControlMessageExample(level: 4, type: 5, payload: 6),
+]
+
+private func makeMessageHeader(for controlBytes: UnsafeMutableRawBufferPointer) -> msghdr {
+    var message = msghdr()
+    message.msg_name = nil
+    message.msg_namelen = 0
+#if os(Windows)
+    message.control_ptr = controlBytes
+    message.msg_flags = 0
+#else
+    message.msg_control = controlBytes.baseAddress
+    message.msg_controllen = .init(controlBytes.count)
+    message.msg_iov = nil
+    message.msg_iovlen = 0
+    message.msg_flags = 0
 #endif
+    return message
+}
+
+private func withEncodedControlMessages<T>(
+    _ messages: [ControlMessageExample],
+    _ body: (_ controlBytes: UnsafeMutableRawBufferPointer, _ header: inout msghdr) -> T
+) -> T {
+    precondition(!messages.isEmpty)
+    let bytesPerMessage = NIOBSDSocketControlMessage.space(payloadSize: MemoryLayout<CInt>.stride)
+    let totalBytes = bytesPerMessage * messages.count
+    let storage = UnsafeMutableRawBufferPointer.allocate(
+        byteCount: totalBytes,
+        alignment: MemoryLayout<cmsghdr>.alignment
+    )
+    storage.initializeMemory(as: UInt8.self, repeating: 0)
+    defer {
+        storage.deallocate()
+    }
+
+    var encoder = UnsafeOutboundControlBytes(controlBytes: storage)
+    for message in messages {
+        encoder.appendControlMessage(level: message.level, type: message.type, payload: message.payload)
+    }
+
+    let controlBytes = encoder.validControlBytes
+    var header = makeMessageHeader(for: controlBytes)
+    return body(controlBytes, &header)
+}
