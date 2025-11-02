@@ -72,6 +72,7 @@ public struct NonBlockingFileIO: Sendable {
         private static let dtDirectory: UInt8 = 4  // matches POSIX DT_DIR
         private static let dtRegular: UInt8 = 8    // matches POSIX DT_REG
         private static let dtSymlink: UInt8 = 10   // matches POSIX DT_LNK
+        private static let symlinkMode: UInt16 = 0xA000
 
         @inline(__always)
         private static func normalizedPath(_ path: String) -> String {
@@ -85,6 +86,10 @@ public struct NonBlockingFileIO: Sendable {
 
         @inline(__always)
         private static func errno(from error: Swift.Error, default defaultErrno: CInt = EINVAL) -> CInt {
+            if let ioError = error as? IOError {
+                return ioError.errnoCode
+            }
+
             if let cocoa = error as? CocoaError {
                 switch cocoa.code {
                 case .fileNoSuchFile, .fileReadNoSuchFile:
@@ -102,8 +107,9 @@ public struct NonBlockingFileIO: Sendable {
                 }
             }
 
-            if let posix = error as? POSIXError {
-                return CInt(posix.code.rawValue)
+            let nsError = error as NSError
+            if nsError.domain == NSPOSIXErrorDomain {
+                return CInt(nsError.code)
             }
 
             return defaultErrno
@@ -121,11 +127,29 @@ public struct NonBlockingFileIO: Sendable {
 
         static func lstat(path: String) throws -> stat {
             var raw = _stat32i64()
+            var attributes: DWORD = INVALID_FILE_ATTRIBUTES
             try withWidePath(path) { widePath in
+                attributes = GetFileAttributesW(widePath)
+                if attributes == INVALID_FILE_ATTRIBUTES {
+                    throw IOError(errnoCode: errnoValue(), reason: "GetFileAttributesW")
+                }
                 if _wstat32i64(widePath, &raw) != 0 {
                     throw IOError(errnoCode: errnoValue(), reason: "lstat")
                 }
             }
+
+            let typeBits: UInt16
+            if attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+                typeBits = symlinkMode
+            } else if attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0 {
+                typeBits = UInt16(truncatingIfNeeded: ucrt.S_IFDIR)
+            } else {
+                typeBits = UInt16(truncatingIfNeeded: ucrt.S_IFREG)
+            }
+
+            let cleared = raw.st_mode & ~UInt16(truncatingIfNeeded: ucrt.S_IFMT)
+            raw.st_mode = cleared | typeBits
+
             var result = stat()
             withUnsafeMutableBytes(of: &result) { destination in
                 withUnsafeBytes(of: raw) { source in

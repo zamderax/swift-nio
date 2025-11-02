@@ -21,11 +21,28 @@ import XCTest
 
 #if os(Windows)
 import ucrt
+private let S_IRWXU: CInt = 0o700
 #endif
 
 #if !os(Windows)
 import CNIOLinux
 #endif
+
+#if os(Windows)
+private let TEST_S_IFMT: Int = Int(ucrt.S_IFMT)
+private let TEST_S_IFDIR: Int = Int(ucrt.S_IFDIR)
+private let TEST_S_IFREG: Int = Int(ucrt.S_IFREG)
+private let TEST_S_IFLNK: Int = 0xA000
+#else
+private let TEST_S_IFMT: Int = Int(S_IFMT)
+private let TEST_S_IFDIR: Int = Int(S_IFDIR)
+private let TEST_S_IFREG: Int = Int(S_IFREG)
+private let TEST_S_IFLNK: Int = Int(S_IFLNK)
+#endif
+
+private func fileType(of mode: some FixedWidthInteger) -> Int {
+    Int(mode) & TEST_S_IFMT
+}
 
 class NonBlockingFileIOTest: XCTestCase {
     private var group: EventLoopGroup!
@@ -87,6 +104,20 @@ class NonBlockingFileIOTest: XCTestCase {
             self._value.withLockedValue { $0 += delta }
         }
     }
+
+#if os(Windows)
+    private func shouldSkipSymbolicLinkTests(for error: Error) -> Bool {
+        guard let ioError = error as? IOError else {
+            return false
+        }
+        switch ioError.errnoCode {
+        case EPERM, EACCES:
+            return true
+        default:
+            return false
+        }
+    }
+#endif
 
     func testBasicFileIOWorks() throws {
         let content = "hello"
@@ -1137,158 +1168,145 @@ class NonBlockingFileIOTest: XCTestCase {
         }
     }
 
-    #if !os(Windows)
     func testLStat() throws {
-        XCTAssertNoThrow(
-            try withTemporaryFile(content: "hello, world") { _, path in
-                let stat = try self.fileIO.lstat(path: path, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual(12, stat.st_size)
-                XCTAssertEqual(S_IFREG, S_IFMT & stat.st_mode)
-            }
-        )
+        try withTemporaryFile(content: "hello, world") { _, path in
+            let stat = try self.fileIO.lstat(path: path, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual(12, stat.st_size)
+            XCTAssertEqual(TEST_S_IFREG, fileType(of: stat.st_mode))
+        }
 
-        XCTAssertNoThrow(
-            try withTemporaryDirectory { path in
-                let stat = try self.fileIO.lstat(path: path, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual(S_IFDIR, S_IFMT & stat.st_mode)
-            }
-        )
+        try withTemporaryDirectory { path in
+            let stat = try self.fileIO.lstat(path: path, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual(TEST_S_IFDIR, fileType(of: stat.st_mode))
+        }
     }
 
-    func testSymlink() {
-        XCTAssertNoThrow(
-            try withTemporaryFile(content: "hello, world") { _, path in
-                let symlink = "\(path).symlink"
-                XCTAssertNoThrow(try self.fileIO.symlink(path: symlink, to: path, eventLoop: self.eventLoop).wait())
-
-                XCTAssertEqual(path, try self.fileIO.readlink(path: symlink, eventLoop: self.eventLoop).wait())
-                let stat = try self.fileIO.lstat(path: symlink, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual(S_IFLNK, S_IFMT & stat.st_mode)
-
-                XCTAssertNoThrow(try self.fileIO.unlink(path: symlink, eventLoop: self.eventLoop).wait())
-                XCTAssertThrowsError(try self.fileIO.lstat(path: symlink, eventLoop: self.eventLoop).wait()) { error in
-                    XCTAssertEqual(ENOENT, (error as? IOError)?.errnoCode)
+    func testSymlink() throws {
+        try withTemporaryFile(content: "hello, world") { _, path in
+            let symlink = "\(path).symlink"
+            do {
+                try self.fileIO.symlink(path: symlink, to: path, eventLoop: self.eventLoop).wait()
+            } catch {
+                #if os(Windows)
+                if self.shouldSkipSymbolicLinkTests(for: error) {
+                    throw XCTSkip("Symbolic link operations require additional privileges on Windows")
                 }
+                #endif
+                throw error
             }
-        )
+
+            XCTAssertEqual(path, try self.fileIO.readlink(path: symlink, eventLoop: self.eventLoop).wait())
+            let stat = try self.fileIO.lstat(path: symlink, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual(TEST_S_IFLNK, fileType(of: stat.st_mode))
+
+            try self.fileIO.unlink(path: symlink, eventLoop: self.eventLoop).wait()
+            XCTAssertThrowsError(try self.fileIO.lstat(path: symlink, eventLoop: self.eventLoop).wait()) { error in
+                XCTAssertEqual(ENOENT, (error as? IOError)?.errnoCode)
+            }
+        }
     }
 
-    func testCreateDirectory() {
-        XCTAssertNoThrow(
-            try withTemporaryDirectory { path in
-                let dir = "\(path)/f1/f2///f3"
-                XCTAssertNoThrow(
-                    try self.fileIO.createDirectory(
-                        path: dir,
-                        withIntermediateDirectories: true,
-                        mode: S_IRWXU,
-                        eventLoop: self.eventLoop
-                    ).wait()
-                )
+    func testCreateDirectory() throws {
+        try withTemporaryDirectory { path in
+            let dir = "\(path)/f1/f2///f3"
+            try self.fileIO.createDirectory(
+                path: dir,
+                withIntermediateDirectories: true,
+                mode: S_IRWXU,
+                eventLoop: self.eventLoop
+            ).wait()
 
-                let stat = try self.fileIO.lstat(path: dir, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual(S_IFDIR, S_IFMT & stat.st_mode)
+            let stat = try self.fileIO.lstat(path: dir, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual(TEST_S_IFDIR, fileType(of: stat.st_mode))
 
-                XCTAssertNoThrow(
-                    try self.fileIO.createDirectory(
-                        path: "\(dir)/f4",
-                        withIntermediateDirectories: false,
-                        mode: S_IRWXU,
-                        eventLoop: self.eventLoop
-                    ).wait()
-                )
+            try self.fileIO.createDirectory(
+                path: "\(dir)/f4",
+                withIntermediateDirectories: false,
+                mode: S_IRWXU,
+                eventLoop: self.eventLoop
+            ).wait()
 
-                let stat2 = try self.fileIO.lstat(path: dir, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual(S_IFDIR, S_IFMT & stat2.st_mode)
+            let stat2 = try self.fileIO.lstat(path: dir, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual(TEST_S_IFDIR, fileType(of: stat2.st_mode))
 
-                let dir3 = "\(path)/f4/."
-                XCTAssertNoThrow(
-                    try self.fileIO.createDirectory(
-                        path: dir3,
-                        withIntermediateDirectories: true,
-                        mode: S_IRWXU,
-                        eventLoop: self.eventLoop
-                    ).wait()
-                )
-            }
-        )
+            let dir3 = "\(path)/f4/."
+            try self.fileIO.createDirectory(
+                path: dir3,
+                withIntermediateDirectories: true,
+                mode: S_IRWXU,
+                eventLoop: self.eventLoop
+            ).wait()
+        }
     }
 
-    func testListDirectory() {
-        XCTAssertNoThrow(
-            try withTemporaryDirectory { path in
-                let file = "\(path)/file"
-                let handle = try self.fileIO.openFile(
-                    _deprecatedPath: file,
-                    mode: .write,
-                    flags: .allowFileCreation(),
-                    eventLoop: self.eventLoop
-                ).wait()
-                defer {
-                    try? handle.close()
-                }
-
-                let list = try self.fileIO.listDirectory(path: path, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual([".", "..", "file"], list.sorted(by: { $0.name < $1.name }).map(\.name))
+    func testListDirectory() throws {
+        try withTemporaryDirectory { path in
+            let file = "\(path)/file"
+            let handle = try self.fileIO.openFile(
+                _deprecatedPath: file,
+                mode: .write,
+                flags: .allowFileCreation(),
+                eventLoop: self.eventLoop
+            ).wait()
+            defer {
+                try? handle.close()
             }
-        )
+
+            let list = try self.fileIO.listDirectory(path: path, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual([".", "..", "file"], list.sorted(by: { $0.name < $1.name }).map(\.name))
+        }
     }
 
-    func testRename() {
-        XCTAssertNoThrow(
-            try withTemporaryDirectory { path in
-                let file = "\(path)/file"
-                let handle = try self.fileIO.openFile(
-                    _deprecatedPath: file,
-                    mode: .write,
-                    flags: .allowFileCreation(),
-                    eventLoop: self.eventLoop
-                ).wait()
-                defer {
-                    try? handle.close()
-                }
-
-                let stat = try self.fileIO.lstat(path: file, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual(S_IFREG, S_IFMT & stat.st_mode)
-
-                let new = "\(path).new"
-                XCTAssertNoThrow(try self.fileIO.rename(path: file, newName: new, eventLoop: self.eventLoop).wait())
-
-                let stat2 = try self.fileIO.lstat(path: new, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual(S_IFREG, S_IFMT & stat2.st_mode)
-
-                XCTAssertThrowsError(try self.fileIO.lstat(path: file, eventLoop: self.eventLoop).wait()) { error in
-                    XCTAssertEqual(ENOENT, (error as? IOError)?.errnoCode)
-                }
+    func testRename() throws {
+        try withTemporaryDirectory { path in
+            let file = "\(path)/file"
+            let handle = try self.fileIO.openFile(
+                _deprecatedPath: file,
+                mode: .write,
+                flags: .allowFileCreation(),
+                eventLoop: self.eventLoop
+            ).wait()
+            defer {
+                try? handle.close()
             }
-        )
+
+            let stat = try self.fileIO.lstat(path: file, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual(TEST_S_IFREG, fileType(of: stat.st_mode))
+
+            let new = "\(path).new"
+            try self.fileIO.rename(path: file, newName: new, eventLoop: self.eventLoop).wait()
+
+            let stat2 = try self.fileIO.lstat(path: new, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual(TEST_S_IFREG, fileType(of: stat2.st_mode))
+
+            XCTAssertThrowsError(try self.fileIO.lstat(path: file, eventLoop: self.eventLoop).wait()) { error in
+                XCTAssertEqual(ENOENT, (error as? IOError)?.errnoCode)
+            }
+        }
     }
 
-    func testRemove() {
-        XCTAssertNoThrow(
-            try withTemporaryDirectory { path in
-                let file = "\(path)/file"
-                let handle = try self.fileIO.openFile(
-                    _deprecatedPath: file,
-                    mode: .write,
-                    flags: .allowFileCreation(),
-                    eventLoop: self.eventLoop
-                ).wait()
-                defer {
-                    try? handle.close()
-                }
-
-                let stat = try self.fileIO.lstat(path: file, eventLoop: self.eventLoop).wait()
-                XCTAssertEqual(S_IFREG, S_IFMT & stat.st_mode)
-
-                XCTAssertNoThrow(try self.fileIO.remove(path: file, eventLoop: self.eventLoop).wait())
-                XCTAssertThrowsError(try self.fileIO.lstat(path: file, eventLoop: self.eventLoop).wait()) { error in
-                    XCTAssertEqual(ENOENT, (error as? IOError)?.errnoCode)
-                }
+    func testRemove() throws {
+        try withTemporaryDirectory { path in
+            let file = "\(path)/file"
+            let handle = try self.fileIO.openFile(
+                _deprecatedPath: file,
+                mode: .write,
+                flags: .allowFileCreation(),
+                eventLoop: self.eventLoop
+            ).wait()
+            defer {
+                try? handle.close()
             }
-        )
+
+            let stat = try self.fileIO.lstat(path: file, eventLoop: self.eventLoop).wait()
+            XCTAssertEqual(TEST_S_IFREG, fileType(of: stat.st_mode))
+
+            try self.fileIO.remove(path: file, eventLoop: self.eventLoop).wait()
+            XCTAssertThrowsError(try self.fileIO.lstat(path: file, eventLoop: self.eventLoop).wait()) { error in
+                XCTAssertEqual(ENOENT, (error as? IOError)?.errnoCode)
+            }
+        }
     }
-    #endif
 
     func testChunkedReadingToleratesChunkHandlersWithForeignEventLoops() throws {
         let content = "hello"
@@ -1874,29 +1892,37 @@ extension NonBlockingFileIOTest {
         }
     }
 
-    #if !os(Windows)
     func testAsyncLStat() async throws {
         try await withTemporaryFile(content: "hello, world") { _, path in
             let stat = try await self.fileIO.lstat(path: path)
             XCTAssertEqual(12, stat.st_size)
-            XCTAssertEqual(S_IFREG, S_IFMT & stat.st_mode)
+            XCTAssertEqual(TEST_S_IFREG, fileType(of: stat.st_mode))
         }
 
         try await withTemporaryDirectory { path in
             let stat = try await self.fileIO.lstat(path: path)
-            XCTAssertEqual(S_IFDIR, S_IFMT & stat.st_mode)
+            XCTAssertEqual(TEST_S_IFDIR, fileType(of: stat.st_mode))
         }
     }
 
     func testAsyncSymlink() async throws {
         try await withTemporaryFile(content: "hello, world") { _, path in
             let symlink = "\(path).symlink"
-            try await self.fileIO.symlink(path: symlink, to: path)
+            do {
+                try await self.fileIO.symlink(path: symlink, to: path)
+            } catch {
+                #if os(Windows)
+                if self.shouldSkipSymbolicLinkTests(for: error) {
+                    throw XCTSkip("Symbolic link operations require additional privileges on Windows")
+                }
+                #endif
+                throw error
+            }
 
             let link = try await self.fileIO.readlink(path: symlink)
             XCTAssertEqual(path, link)
             let stat = try await self.fileIO.lstat(path: symlink)
-            XCTAssertEqual(S_IFLNK, S_IFMT & stat.st_mode)
+            XCTAssertEqual(TEST_S_IFLNK, fileType(of: stat.st_mode))
 
             try await self.fileIO.unlink(path: symlink)
             do {
@@ -1914,12 +1940,12 @@ extension NonBlockingFileIOTest {
             try await self.fileIO.createDirectory(path: dir, withIntermediateDirectories: true, mode: S_IRWXU)
 
             let stat = try await self.fileIO.lstat(path: dir)
-            XCTAssertEqual(S_IFDIR, S_IFMT & stat.st_mode)
+            XCTAssertEqual(TEST_S_IFDIR, fileType(of: stat.st_mode))
 
             try await self.fileIO.createDirectory(path: "\(dir)/f4", withIntermediateDirectories: false, mode: S_IRWXU)
 
             let stat2 = try await self.fileIO.lstat(path: dir)
-            XCTAssertEqual(S_IFDIR, S_IFMT & stat2.st_mode)
+            XCTAssertEqual(TEST_S_IFDIR, fileType(of: stat2.st_mode))
 
             let dir3 = "\(path)/f4/."
             try await self.fileIO.createDirectory(path: dir3, withIntermediateDirectories: true, mode: S_IRWXU)
@@ -1933,7 +1959,7 @@ extension NonBlockingFileIOTest {
                 _deprecatedPath: file,
                 mode: .write,
                 flags: .allowFileCreation()
-            ) { handle in
+            ) { _ in
                 let list = try await self.fileIO.listDirectory(path: path)
                 XCTAssertEqual([".", "..", "file"], list.sorted(by: { $0.name < $1.name }).map(\.name))
             }
@@ -1947,15 +1973,15 @@ extension NonBlockingFileIOTest {
                 _deprecatedPath: file,
                 mode: .write,
                 flags: .allowFileCreation()
-            ) { handle in
+            ) { _ in
                 let stat = try await self.fileIO.lstat(path: file)
-                XCTAssertEqual(S_IFREG, S_IFMT & stat.st_mode)
+                XCTAssertEqual(TEST_S_IFREG, fileType(of: stat.st_mode))
 
                 let new = "\(path).new"
                 try await self.fileIO.rename(path: file, newName: new)
 
                 let stat2 = try await self.fileIO.lstat(path: new)
-                XCTAssertEqual(S_IFREG, S_IFMT & stat2.st_mode)
+                XCTAssertEqual(TEST_S_IFREG, fileType(of: stat2.st_mode))
 
                 do {
                     _ = try await self.fileIO.lstat(path: file)
@@ -1974,9 +2000,9 @@ extension NonBlockingFileIOTest {
                 _deprecatedPath: file,
                 mode: .write,
                 flags: .allowFileCreation()
-            ) { handle in
+            ) { _ in
                 let stat = try await self.fileIO.lstat(path: file)
-                XCTAssertEqual(S_IFREG, S_IFMT & stat.st_mode)
+                XCTAssertEqual(TEST_S_IFREG, fileType(of: stat.st_mode))
 
                 try await self.fileIO.remove(path: file)
                 do {
@@ -1988,6 +2014,5 @@ extension NonBlockingFileIOTest {
             }
         }
     }
-    #endif
 }
 

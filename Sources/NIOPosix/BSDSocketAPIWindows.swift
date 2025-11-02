@@ -556,7 +556,11 @@ extension NIOBSDSocket {
             nil,
             DWORD(TF_USE_KERNEL_APC)
         ) {
-            throw IOError(winsock: WSAGetLastError(), reason: "TransmitFile")
+            let error = WSAGetLastError()
+            if error == WSA_IO_PENDING || error == Int32(ERROR_IO_PENDING) {
+                return .wouldBlock(0)
+            }
+            throw IOError(winsock: error, reason: "TransmitFile")
         }
 
         return .processed(Int(nNumberOfBytesToWrite))

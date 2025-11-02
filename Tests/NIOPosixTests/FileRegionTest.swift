@@ -1,14 +1,4 @@
-#if os(Windows)
-import XCTest
-
-@testable import NIOPosix
-
-final class FileRegionTest: XCTestCase {
-    func testFileRegionUnsupportedOnWindows() throws {
-        throw XCTSkip("File region tests are unsupported on Windows")
-    }
-}
-#else//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -207,7 +197,7 @@ class FileRegionTest: XCTestCase {
             XCTAssertNoThrow(try clientChannel.syncCloseAcceptingAlreadyClosed())
         }
 
-        try withTemporaryFile { fd, filePath in
+        try withTemporaryFile { _, filePath in
             try content.write(toFile: filePath, atomically: false, encoding: .ascii)
 
             let future = clientChannel.eventLoop.submit {
@@ -259,7 +249,7 @@ class FileRegionTest: XCTestCase {
     }
 
     func testWholeFileFileRegion() throws {
-        try withTemporaryFile(content: "hello") { fd, path in
+        try withTemporaryFile(content: "hello") { _, path in
             let handle = try NIOFileHandle(_deprecatedPath: path)
             let region = try FileRegion(fileHandle: handle)
             defer {
@@ -291,15 +281,24 @@ class FileRegionTest: XCTestCase {
             var fr1Bytes: [UInt8] = Array(repeating: 0, count: 5)
             var fr2Bytes = fr1Bytes
             try fh1.withUnsafeFileDescriptor { fd in
-                let r = try Posix.read(descriptor: fd, pointer: &fr1Bytes, size: 5)
-                XCTAssertEqual(r, IOResult<Int>.processed(5))
+                let result = try Posix.read(descriptor: fd, pointer: &fr1Bytes, size: 5)
+                switch result {
+                case .processed(let value):
+                    XCTAssertEqual(value, 5)
+                case .wouldBlock:
+                    XCTFail("unexpected wouldBlock from read")
+                }
             }
             try fh2.withUnsafeFileDescriptor { fd in
-                let r = try Posix.read(descriptor: fd, pointer: &fr2Bytes, size: 5)
-                XCTAssertEqual(r, IOResult<Int>.processed(5))
+                let result = try Posix.read(descriptor: fd, pointer: &fr2Bytes, size: 5)
+                switch result {
+                case .processed(let value):
+                    XCTAssertEqual(value, 5)
+                case .wouldBlock:
+                    XCTFail("unexpected wouldBlock from read")
+                }
             }
             defer {
-                // fr2's underlying fd must be closed by us.
                 XCTAssertNoThrow(try fh2.close())
             }
 
@@ -309,8 +308,7 @@ class FileRegionTest: XCTestCase {
     }
 
     func testMassiveFileRegionThatJustAboutWorks() {
-        withTemporaryFile(content: "0123456789") { fh, path in
-            // just in case someone uses 32bit platforms
+        withTemporaryFile(content: "0123456789") { fh, _ in
             let readerIndex = UInt64(_UInt56.max) < UInt64(Int.max) ? Int(_UInt56.max) : Int.max
             let fr = FileRegion(fileHandle: fh, readerIndex: readerIndex, endIndex: Int.max)
             XCTAssertEqual(readerIndex, fr.readerIndex)
@@ -319,8 +317,7 @@ class FileRegionTest: XCTestCase {
     }
 
     func testMassiveFileRegionReaderIndexWorks() {
-        withTemporaryFile(content: "0123456789") { fh, path in
-            // just in case someone uses 32bit platforms
+        withTemporaryFile(content: "0123456789") { fh, _ in
             let readerIndex = (UInt64(_UInt56.max) < UInt64(Int.max) ? Int(_UInt56.max) : Int.max) - 1000
             var fr = FileRegion(fileHandle: fh, readerIndex: readerIndex, endIndex: Int.max)
             for i in 0..<1000 {
@@ -361,16 +358,17 @@ class FileRegionTest: XCTestCase {
         XCTAssertLessThanOrEqual(MemoryLayout<Level1>.size, 24)
 
         XCTAssertNoThrow(
-            try withTemporaryFile(content: "0123456789") { fh, path in
+            try withTemporaryFile(content: "0123456789") { fh, _ in
                 let fr = try FileRegion(fileHandle: fh)
                 XCTAssertLessThanOrEqual(
                     MemoryLayout.size(ofValue: Level1.case1(.case2(.case3(.case4(.fileRegion(fr)))))),
                     24
                 )
-                XCTAssertLessThanOrEqual(MemoryLayout.size(ofValue: Level1.case1(.case3(.case4(.case1(fr))))), 24)
+                XCTAssertLessThanOrEqual(
+                    MemoryLayout.size(ofValue: Level1.case1(.case3(.case4(.case1(fr))))),
+                    24
+                )
             }
         )
     }
 }
-#endif
-

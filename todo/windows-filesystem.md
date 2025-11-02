@@ -3,7 +3,7 @@
 ## File I/O
 - [x] Rebuild `NIOFileHandle` functionality on Windows so `Tests/NIOPosixTests/NIOFileHandleTest.swift:8` can run.
 - [x] Implement Windows `NonBlockingFileIO` paths to un-skip `Tests/NIOPosixTests/NonBlockingFileIOTest.swift:10`.
-- [ ] Enable Windows file-region support to restore `Tests/NIOPosixTests/FileRegionTest.swift:8`.
+- [x] Enable Windows file-region support to restore `Tests/NIOPosixTests/FileRegionTest.swift:8`.
 
 ## Syscall Abstraction Layer
 - [ ] Provide a Windows backend for the SAL event loop and channels (`Tests/NIOPosixTests/SALEventLoopTests.swift:8`, `SALChannelTests.swift:8`).
