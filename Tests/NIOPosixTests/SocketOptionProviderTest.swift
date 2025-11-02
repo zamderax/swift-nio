@@ -1,11 +1,81 @@
 #if os(Windows)
+import NIOCore
 import XCTest
+import WinSDK
 
 @testable import NIOPosix
 
 final class SocketOptionProviderTest: XCTestCase {
-    func testSocketOptionsUnsupportedOnWindows() throws {
-        throw XCTSkip("Socket option provider tests are unsupported on Windows")
+    private var group: MultiThreadedEventLoopGroup!
+    private var serverChannel: Channel!
+    private var clientChannel: Channel!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.serverChannel = try ServerBootstrap(group: self.group)
+            .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
+            .childChannelInitializer { channel in
+                channel.eventLoop.makeSucceededFuture(())
+            }
+            .bind(host: "127.0.0.1", port: 0)
+            .wait()
+        self.clientChannel = try ClientBootstrap(group: self.group)
+            .channelOption(.socketOption(.so_keepalive), value: 0)
+            .connect(to: self.serverChannel.localAddress!)
+            .wait()
+    }
+
+    override func tearDownWithError() throws {
+        if let clientChannel {
+            try clientChannel.close().wait()
+        }
+        if let serverChannel {
+            try serverChannel.close().wait()
+        }
+        if let group {
+            try group.syncShutdownGracefully()
+        }
+        self.clientChannel = nil
+        self.serverChannel = nil
+        self.group = nil
+        try super.tearDownWithError()
+    }
+
+    func testUnsafeSetAndGetSocketOption() throws {
+        let provider = try XCTUnwrap(self.clientChannel as? SocketOptionProvider)
+        XCTAssertNoThrow(
+            try provider.unsafeSetSocketOption(
+                level: .socket,
+                name: .so_keepalive,
+                value: CInt(1)
+            ).wait()
+        )
+        let keepalive: CInt = try provider.unsafeGetSocketOption(level: .socket, name: .so_keepalive).wait()
+        XCTAssertEqual(1, keepalive)
+    }
+
+    func testChannelOptionAPIsAffectSocketOptions() throws {
+        XCTAssertNoThrow(
+            try self.clientChannel.setOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1).wait()
+        )
+        let provider = try XCTUnwrap(self.clientChannel as? SocketOptionProvider)
+        let nodelay: CInt = try provider.unsafeGetSocketOption(level: .tcp, name: .tcp_nodelay).wait()
+        XCTAssertEqual(1, nodelay)
+    }
+
+    func testServerChannelReportsReuseAddr() throws {
+        XCTAssertTrue(try getBoolSocketOption(channel: self.serverChannel, level: .socket, name: .so_reuseaddr))
+        let provider = try XCTUnwrap(self.serverChannel as? SocketOptionProvider)
+        XCTAssertNoThrow(
+            try provider.unsafeSetSocketOption(
+                level: .socket,
+                name: .so_reuseaddr,
+                value: CInt(0)
+            ).wait()
+        )
+        let reuse: CInt = try provider.unsafeGetSocketOption(level: .socket, name: .so_reuseaddr).wait()
+        XCTAssertEqual(0, reuse)
     }
 }
 #else//===----------------------------------------------------------------------===//

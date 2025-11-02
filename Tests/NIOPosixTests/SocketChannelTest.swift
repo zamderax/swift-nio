@@ -20,6 +20,10 @@ import XCTest
 
 @testable import NIOPosix
 
+#if os(Windows)
+import WinSDK
+#endif
+
 extension Array {
     /// A helper function that asserts that a predicate is true for all elements.
     fileprivate func assertAll(_ predicate: (Element) -> Bool) {
@@ -624,7 +628,63 @@ final class SocketChannelTest: XCTestCase {
 
     func testSocketFlagNONBLOCKWorks() throws {
         #if os(Windows)
-        throw XCTSkip("Socket flag manipulations are unsupported on Windows")
+        var socket = try assertNoThrowWithValue(ServerSocket(protocolFamily: .inet, setNonBlocking: true))
+        XCTAssertThrowsError(try socket.accept()) { error in
+            if let ioError = error as? IOError {
+                XCTAssertEqual(ioError.winsockCode, WSAEWOULDBLOCK)
+            } else {
+                XCTFail("unexpected error: \(error)")
+            }
+        }
+        XCTAssertNoThrow(try socket.close())
+
+        socket = try assertNoThrowWithValue(ServerSocket(protocolFamily: .inet, setNonBlocking: false))
+        // Set an option we can observe later.
+        XCTAssertNoThrow(
+            try socket.withUnsafeHandle { fd in
+                var reuse: CInt = 1
+                try withUnsafePointer(to: &reuse) { pointer in
+                    try NIOBSDSocket.setsockopt(
+                        socket: fd,
+                        level: .socket,
+                        option_name: .so_reuseaddr,
+                        option_value: pointer,
+                        option_len: socklen_t(MemoryLayout.size(ofValue: reuse))
+                    )
+                }
+            }
+        )
+
+        XCTAssertNoThrow(try socket.setNonBlocking())
+
+        XCTAssertThrowsError(try socket.accept()) { error in
+            if let ioError = error as? IOError {
+                XCTAssertEqual(ioError.winsockCode, WSAEWOULDBLOCK)
+            } else {
+                XCTFail("unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertNoThrow(
+            try socket.withUnsafeHandle { fd in
+                var reuse: CInt = 0
+                var length = socklen_t(MemoryLayout.size(ofValue: reuse))
+                try withUnsafeMutablePointer(to: &reuse) { valuePtr in
+                    try withUnsafeMutablePointer(to: &length) { lengthPtr in
+                        try NIOBSDSocket.getsockopt(
+                            socket: fd,
+                            level: .socket,
+                            option_name: .so_reuseaddr,
+                            option_value: UnsafeMutableRawPointer(valuePtr),
+                            option_len: lengthPtr
+                        )
+                    }
+                }
+                XCTAssertEqual(1, reuse)
+            }
+        )
+
+        XCTAssertNoThrow(try socket.close())
         #else
         var socket = try assertNoThrowWithValue(try ServerSocket(protocolFamily: .inet, setNonBlocking: true))
         XCTAssertNoThrow(
@@ -761,7 +821,51 @@ final class SocketChannelTest: XCTestCase {
 
     func testSetSockOptDoesNotOverrideExistingFlags() throws {
         #if os(Windows)
-        throw XCTSkip("Socket flag configuration tests are unsupported on Windows")
+        let socket = try assertNoThrowWithValue(
+            Socket(
+                protocolFamily: .inet,
+                type: .stream,
+                setNonBlocking: false
+            )
+        )
+        // Configure a socket option we can validate after toggling non-blocking mode.
+        XCTAssertNoThrow(
+            try socket.withUnsafeHandle { fd in
+                var buffer: CInt = 4096
+                try withUnsafePointer(to: &buffer) { pointer in
+                    try NIOBSDSocket.setsockopt(
+                        socket: fd,
+                        level: .socket,
+                        option_name: .so_rcvbuf,
+                        option_value: pointer,
+                        option_len: socklen_t(MemoryLayout.size(ofValue: buffer))
+                    )
+                }
+            }
+        )
+
+        XCTAssertNoThrow(try socket.setNonBlocking())
+
+        XCTAssertNoThrow(
+            try socket.withUnsafeHandle { fd in
+                var buffer: CInt = 0
+                var length = socklen_t(MemoryLayout.size(ofValue: buffer))
+                try withUnsafeMutablePointer(to: &buffer) { valuePtr in
+                    try withUnsafeMutablePointer(to: &length) { lengthPtr in
+                        try NIOBSDSocket.getsockopt(
+                            socket: fd,
+                            level: .socket,
+                            option_name: .so_rcvbuf,
+                            option_value: UnsafeMutableRawPointer(valuePtr),
+                            option_len: lengthPtr
+                        )
+                    }
+                }
+                XCTAssertGreaterThanOrEqual(buffer, 4096)
+            }
+        )
+
+        XCTAssertNoThrow(try socket.close())
         #else
         let s = try assertNoThrowWithValue(
             Socket(

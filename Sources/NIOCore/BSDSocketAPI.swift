@@ -33,6 +33,8 @@ import let WinSDK.IPV6_MULTICAST_IF
 import let WinSDK.IPV6_MULTICAST_LOOP
 import let WinSDK.IPV6_V6ONLY
 
+@usableFromInline let SO_TIMESTAMP_WINDOWS: CInt = 0x300A
+
 import let WinSDK.AF_INET
 import let WinSDK.AF_INET6
 import let WinSDK.AF_UNIX
@@ -532,12 +534,16 @@ extension NIOBSDSocket.Option {
 }
 #endif
 
-#if !os(Windows) && !os(WASI)
+#if !os(WASI)
 extension NIOBSDSocket.Option {
     /// Indicate when to generate timestamps.
     @inlinable
     public static var so_timestamp: NIOBSDSocket.Option {
+        #if os(Windows)
+        NIOBSDSocket.Option(rawValue: SO_TIMESTAMP_WINDOWS)
+        #else
         NIOBSDSocket.Option(rawValue: SO_TIMESTAMP)
+        #endif
     }
 }
 #endif

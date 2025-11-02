@@ -11,11 +11,11 @@
 - [x] Port the system-call performance helpers in `Tests/NIOPosixTests/SystemTest.swift:6` and `SystemCallWrapperHelpers.swift:8`.
 
 ## Socket Options & Event Loop Behaviours
-- [ ] Support the single-thread bootstrap options used in `Tests/NIOPosixTests/EventLoopTest.swift:1447`.
-- [ ] Add Windows implementations for socket-flag manipulation (`Tests/NIOPosixTests/SocketChannelTest.swift:627` and `764`).
-- [ ] Recreate the drain-on-write-error behaviour checked in `Tests/NIOPosixTests/ChannelTests.swift:2983`.
-- [ ] Expose SO_TIMESTAMP or a functional equivalent so `Tests/NIOPosixTests/ChannelTests.swift:3141` can execute.
-- [ ] Implement `.socketOption` coverage to un-skip `Tests/NIOPosixTests/SocketOptionProviderTest.swift:8`.
+- [x] Support the single-thread bootstrap options used in `Tests/NIOPosixTests/EventLoopTest.swift:1447`.
+- [x] Add Windows implementations for socket-flag manipulation (`Tests/NIOPosixTests/SocketChannelTest.swift:627` and `764`).
+- [x] Recreate the drain-on-write-error behaviour checked in `Tests/NIOPosixTests/ChannelTests.swift:2983`.
+- [x] Expose SO_TIMESTAMP or a functional equivalent so `Tests/NIOPosixTests/ChannelTests.swift:3141` can execute.
+- [x] Implement `.socketOption` coverage to un-skip `Tests/NIOPosixTests/SocketOptionProviderTest.swift:8`.
 
 ## Datagram & Multicast Support
 - [ ] Implement pending datagram write coalescing (`Tests/NIOPosixTests/PendingDatagramWritesManagerTests.swift:8`).

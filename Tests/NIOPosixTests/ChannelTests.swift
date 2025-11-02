@@ -25,6 +25,39 @@ import XCTest
 import CNIOLinux
 #endif
 
+#if os(Windows)
+import WinSDK
+
+private func windowsSupportsSocketTimestamp() -> Bool {
+    do {
+        let socket = try Socket(protocolFamily: .inet, type: .stream, setNonBlocking: false)
+        defer { try? socket.close() }
+        return try socket.withUnsafeHandle { fd in
+            var flag: CInt = 1
+            return try withUnsafePointer(to: &flag) { pointer in
+                do {
+                    try NIOBSDSocket.setsockopt(
+                        socket: fd,
+                        level: .socket,
+                        option_name: .so_timestamp,
+                        option_value: pointer,
+                        option_len: socklen_t(MemoryLayout.size(ofValue: flag))
+                    )
+                    return true
+                } catch let error as IOError {
+                    if error.winsockCode == WSAENOPROTOOPT || error.winsockCode == WSAEINVAL {
+                        return false
+                    }
+                    throw error
+                }
+            }
+        }
+    } catch {
+        return false
+    }
+}
+#endif
+
 class ChannelLifecycleHandler: ChannelInboundHandler {
     public typealias InboundIn = Any
 
@@ -2979,9 +3012,6 @@ final class ChannelTests: XCTestCase {
     }
 
     func testCloseInReadTriggeredByDrainingTheReceiveBufferBecauseOfWriteError() throws {
-        #if os(Windows)
-        throw XCTSkip("Draining the receive buffer on write error is unsupported on Windows")
-        #else
         final class WriteWhenActiveHandler: ChannelInboundHandler, Sendable {
             typealias InboundIn = ByteBuffer
             typealias OutboundOut = ByteBuffer
@@ -3014,11 +3044,19 @@ final class ChannelTests: XCTestCase {
             }
 
             override func write(pointer: UnsafeRawBufferPointer) throws -> NIOPosix.IOResult<Int> {
+                #if os(Windows)
+                throw IOError(winsock: WSAEFAULT, reason: "WriteAlwaysFailingSocket.write fake error")
+                #else
                 throw IOError(errnoCode: ETXTBSY, reason: "WriteAlwaysFailingSocket.write fake error")
+                #endif
             }
 
             override func writev(iovecs: UnsafeBufferPointer<IOVector>) throws -> NIOPosix.IOResult<Int> {
+                #if os(Windows)
+                throw IOError(winsock: WSAEFAULT, reason: "WriteAlwaysFailingSocket.writev fake error")
+                #else
                 throw IOError(errnoCode: ETXTBSY, reason: "WriteAlwaysFailingSocket.writev fake error")
+                #endif
             }
         }
 
@@ -3133,13 +3171,14 @@ final class ChannelTests: XCTestCase {
 
         XCTAssertNoThrow(try allDonePromise.futureResult.wait())
         XCTAssertFalse(c.isActive)
-        #endif
     }
 
     func testApplyingTwoDistinctSocketOptionsOfSameTypeWorks() throws {
         #if os(Windows)
-        throw XCTSkip("SO_TIMESTAMP is unavailable on Windows")
-        #else
+        guard windowsSupportsSocketTimestamp() else {
+            throw XCTSkip("SO_TIMESTAMP is unavailable on this Windows platform")
+        }
+        #endif
         let singleThreadedELG = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer {
             XCTAssertNoThrow(try singleThreadedELG.syncShutdownGracefully())
@@ -3225,7 +3264,6 @@ final class ChannelTests: XCTestCase {
         XCTAssertTrue(try getBoolSocketOption(channel: accepted3, level: .socket, name: .so_keepalive))
 
         XCTAssertFalse(try getBoolSocketOption(channel: accepted3, level: .tcp, name: .tcp_nodelay))
-        #endif
     }
 
     func testUnprocessedOutboundUserEventFailsOnServerSocketChannel() throws {

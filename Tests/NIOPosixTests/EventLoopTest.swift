@@ -1443,9 +1443,6 @@ final class EventLoopTest: XCTestCase {
     }
 
     func testWeCanDoTrulySingleThreadedNetworking() throws {
-        #if os(Windows)
-        throw XCTSkip("Single-threaded networking bootstrap options are unsupported on Windows")
-        #else
         final class SaveReceivedByte: ChannelInboundHandler {
             typealias InboundIn = ByteBuffer
 
@@ -1480,7 +1477,7 @@ final class EventLoopTest: XCTestCase {
             let receiveHandler = NIOLoopBound(SaveReceivedByte(received: received), eventLoop: loop)
 
             ServerBootstrap(group: loop)
-                .serverChannelOption(ChannelOptions.socket(.init(SOL_SOCKET), .init(SO_REUSEADDR)), value: 1)
+                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .childChannelInitializer { accepted in
                     accepted.eventLoop.makeCompletedFuture {
                         try accepted.pipeline.syncOperations.addHandler(receiveHandler.value)
@@ -1514,7 +1511,6 @@ final class EventLoopTest: XCTestCase {
 
         // All done, the EventLoop is terminated so we should be able to check the results.
         XCTAssertEqual(UInt8(ascii: "J"), received.withLockedValue { $0 })
-        #endif
     }
 
     func testWeFailOutstandingScheduledTasksOnELShutdown() {
