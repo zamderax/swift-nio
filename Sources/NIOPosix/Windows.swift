@@ -21,6 +21,16 @@ typealias ssize_t = SSIZE_T
 
 let missingPipeSupportWindows = "Unimplemented: NIOPosix does not support PipeChannel on Windows"
 
+@inline(__always)
+func makeWindowsPipeUnsupportedIOError(function: StaticString = #function) -> IOError {
+    IOError(winsock: WSAEOPNOTSUPP, reason: "\(missingPipeSupportWindows) (\(function))")
+}
+
+@inline(__always)
+func makeWindowsPipeUnsupportedError() -> ChannelError {
+    .operationUnsupported
+}
+
 // overwrite the windows write method, as the one without underscore is deprecated.
 // also we can use this to downcast the count Int to UInt32
 func write(_ fd: Int32, _ ptr: UnsafeRawPointer?, _ count: Int) -> Int32 {

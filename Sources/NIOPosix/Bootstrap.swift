@@ -1,4 +1,4 @@
-//===----------------------------------------------------------------------===//
+﻿//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -2363,7 +2363,7 @@ public final class NIOPipeBootstrap {
     /// - Returns: an `EventLoopFuture<Channel>` to deliver the `Channel`.
     public func takingOwnershipOfDescriptor(inputOutput: CInt) -> EventLoopFuture<Channel> {
         #if os(Windows)
-        fatalError(missingPipeSupportWindows)
+        return self.group.next().makeFailedFuture(makeWindowsPipeUnsupportedError())
         #else
         let inputFD = inputOutput
         let outputFD = try! Posix.dup(descriptor: inputOutput)
@@ -2474,7 +2474,7 @@ extension NIOPipeBootstrap {
         channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<Output>
     ) async throws -> Output {
         #if os(Windows)
-        fatalError(missingPipeSupportWindows)
+        throw makeWindowsPipeUnsupportedError()
         #else
         let inputFD = inputOutput
         let outputFD = try! Posix.dup(descriptor: inputOutput)
@@ -2592,7 +2592,7 @@ extension NIOPipeBootstrap {
         channelInitializer: @escaping @Sendable (Channel) -> EventLoopFuture<ChannelInitializerResult>
     ) -> EventLoopFuture<ChannelInitializerResult> {
         #if os(Windows)
-        fatalError(missingPipeSupportWindows)
+        return self.group.next().makeFailedFuture(makeWindowsPipeUnsupportedError())
         #else
         precondition(
             input ?? 0 >= 0 && output ?? 0 >= 0 && input != output,
@@ -2700,3 +2700,4 @@ private struct DefaultNIOPipeBootstrapHooks: NIOPipeBootstrapHooks {
         try PipeChannel(eventLoop: eventLoop, input: input, output: output)
     }
 }
+
