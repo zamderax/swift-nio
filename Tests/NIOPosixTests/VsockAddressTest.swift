@@ -1,11 +1,47 @@
 #if os(Windows)
+import WinSDK
 import XCTest
 
 @testable import NIOPosix
 
 final class VsockAddressTest: XCTestCase {
-    func testVsockAddressUnsupportedOnWindows() throws {
-        throw XCTSkip("Vsock address tests are unsupported on Windows")
+    func testHyperVSocketAddressEqualityAndHashing() throws {
+        let serviceId = try HyperVSocketAddress.generateServiceIdentifier()
+        let address = HyperVSocketAddress(vmId: HyperVSocketAddress.VmId.loopback, serviceId: serviceId)
+        let set: Set<HyperVSocketAddress> = [address]
+
+        XCTAssertEqual(address, HyperVSocketAddress(vmId: HyperVSocketAddress.VmId.loopback, serviceId: serviceId))
+        XCTAssertTrue(set.contains(address))
+
+        let differentService = try HyperVSocketAddress.generateServiceIdentifier()
+        let differentAddress = HyperVSocketAddress(vmId: HyperVSocketAddress.VmId.loopback, serviceId: differentService)
+
+        XCTAssertNotEqual(address, differentAddress)
+        XCTAssertFalse(set.contains(differentAddress))
+    }
+
+    func testHyperVSocketAddressWithSockAddrRoundTrip() throws {
+        let vmId = HyperVSocketAddress.VmId.loopback
+        let serviceId = try HyperVSocketAddress.generateServiceIdentifier()
+        let address = HyperVSocketAddress(vmId: vmId, serviceId: serviceId)
+
+        address.withSockAddr { pointer, size in
+            XCTAssertEqual(size, MemoryLayout<HyperVRawSocketAddress>.size)
+            let raw = pointer.withMemoryRebound(to: HyperVRawSocketAddress.self, capacity: 1) { $0.pointee }
+            XCTAssertEqual(raw.Family, hyperVAddressFamilyValue)
+            XCTAssertTrue(HyperVSocketAddress(vmId: raw.VmId, serviceId: raw.ServiceId) == address)
+        }
+    }
+
+    func testGenerateServiceIdentifierProducesDistinctValues() throws {
+        let first = try HyperVSocketAddress.generateServiceIdentifier()
+        let second = try HyperVSocketAddress.generateServiceIdentifier()
+
+        XCTAssertFalse(withUnsafeBytes(of: first) { firstBytes in
+            withUnsafeBytes(of: second) { secondBytes in
+                firstBytes.elementsEqual(secondBytes)
+            }
+        })
     }
 }
 #else//===----------------------------------------------------------------------===//

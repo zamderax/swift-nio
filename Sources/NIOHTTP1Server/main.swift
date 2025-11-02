@@ -15,6 +15,21 @@
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+#if os(Windows)
+import ucrt
+#elseif canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
+private func currentProcessID() -> Int32 {
+#if os(Windows)
+    return _getpid()
+#else
+    return getpid()
+#endif
+}
 
 extension String {
     func chopPrefix(_ prefix: String) -> String? {
@@ -319,7 +334,9 @@ private final class HTTPHandler: ChannelInboundHandler {
         case "/dynamic/echo_balloon":
             return { self.handleEcho(context: $0, request: $1, balloonInMemory: true) }
         case "/dynamic/pid":
-            return { context, req in self.handleJustWrite(context: context, request: req, string: "\(getpid())") }
+            return { context, req in
+                self.handleJustWrite(context: context, request: req, string: "\(currentProcessID())")
+            }
         case "/dynamic/write-delay":
             return { context, req in
                 self.handleJustWrite(
@@ -336,7 +353,7 @@ private final class HTTPHandler: ChannelInboundHandler {
                 self.handleJustWrite(
                     context: context,
                     request: req,
-                    string: "\(getpid())\r\n",
+                    string: "\(currentProcessID())\r\n",
                     trailer: ("Trailer-Key", "Trailer-Value")
                 )
             }

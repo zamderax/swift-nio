@@ -26,9 +26,9 @@
 - [x] Add Windows-friendly UNIX-domain path helpers and selector coverage to replace skips in `Tests/NIOPosixTests/TestUtils.swift:196` and `SelectorTest.swift:8`.
 
 ## Higher-Level Networking Features
-- [ ] Implement the remaining Happy Eyeballs networking pieces required by `Tests/NIOPosixTests/HappyEyeballsTest.swift:6`.
-- [ ] Restore system control message validation once cmsg inspection works on Windows (`Tests/NIOPosixTests/SystemTest.swift:6`).
-- [ ] Provide full Windows coverage for `SocketAddress` POSIX-specific behaviour and vsock address parsing (`Tests/NIOPosixTests/SocketAddressTest.swift:23`, `VsockAddressTest.swift:8`).
+- [x] Implement the remaining Happy Eyeballs networking pieces required by `Tests/NIOPosixTests/HappyEyeballsTest.swift:6`.
+- [x] Restore system control message validation once cmsg inspection works on Windows (`Tests/NIOPosixTests/SystemTest.swift:6`).
+- [x] Provide full Windows coverage for `SocketAddress` POSIX-specific behaviour and vsock address parsing (`Tests/NIOPosixTests/SocketAddressTest.swift:23`, `VsockAddressTest.swift:8`).
 
 ## Cleanup
-- [ ] Swap `getpid()` for `_getpid()` in `Sources/NIOHTTP1Server/main.swift:322` and `:339` to silence Windows deprecation warnings.
+- [x] Swap `getpid()` for `_getpid()` in `Sources/NIOHTTP1Server/main.swift:322` and `:339` to silence Windows deprecation warnings.

@@ -1,12 +1,4 @@
-#if os(Windows)
-import XCTest
-
-final class HappyEyeballsTest: XCTestCase {
-    func testWindowsNotSupported() throws {
-        throw XCTSkip("HappyEyeballs tests rely on POSIX networking not available on Windows yet")
-    }
-}
-#else//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -20,7 +12,20 @@ final class HappyEyeballsTest: XCTestCase {
 //
 //===----------------------------------------------------------------------===//
 
+#if os(Windows)
+import ucrt
+import WinSDK
+
+private typealias in_addr = WinSDK.IN_ADDR
+private typealias in6_addr = WinSDK.IN6_ADDR
+private typealias in_port_t = WinSDK.u_short
+private typealias sa_family_t = WinSDK.ADDRESS_FAMILY
+#endif
+
+#if canImport(CNIOLinux)
 import CNIOLinux
+#endif
+
 import NIOConcurrencyHelpers
 import NIOEmbedded
 import XCTest
@@ -28,7 +33,9 @@ import XCTest
 @testable import NIOCore
 @testable import NIOPosix
 
-#if canImport(Darwin)
+#if os(Windows)
+// Nothing extra needed here, `WinSDK` provides the required C socket types.
+#elseif canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
@@ -1476,4 +1483,3 @@ struct ChannelSet: Sendable, Sequence {
         self.channels.withLockedValue { $0 }.finishAll()
     }
 }
-#endif

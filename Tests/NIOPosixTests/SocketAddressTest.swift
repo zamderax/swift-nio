@@ -13,30 +13,48 @@
 //===----------------------------------------------------------------------===//
 
 #if os(Windows)
+import ucrt
+import WinSDK
+#elseif canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(Bionic)
+import Bionic
+#endif
+
+#if canImport(CNIOLinux)
+import CNIOLinux
+#endif
+
 import XCTest
 
 @testable import NIOCore
 @testable import NIOPosix
+
+#if os(Windows)
+private typealias in_addr = WinSDK.IN_ADDR
+private typealias in6_addr = WinSDK.IN6_ADDR
+private typealias in_port_t = WinSDK.u_short
+private typealias sa_family_t = WinSDK.ADDRESS_FAMILY
+private typealias sockaddr_in = WinSDK.sockaddr_in
+private typealias sockaddr_in6 = WinSDK.sockaddr_in6
+private typealias sockaddr_un = WinSDK.sockaddr_un
+private typealias sockaddr_storage = WinSDK.sockaddr_storage
+#endif
 
 final class SocketAddressTest: XCTestCase {
-    func testSocketAddressPosixFeaturesUnsupportedOnWindows() throws {
-        throw XCTSkip("SocketAddress POSIX-focused tests are unsupported on Windows")
-    }
-}
-#else
-import CNIOLinux
-import XCTest
-
-@testable import NIOCore
-@testable import NIOPosix
-class SocketAddressTest: XCTestCase {
-
     func testDescriptionWorks() throws {
         var ipv4SocketAddress = sockaddr_in()
-        let res = "10.0.0.1".withCString { p in
-            inet_pton(NIOBSDSocket.AddressFamily.inet.rawValue, p, &ipv4SocketAddress.sin_addr)
-        }
-        XCTAssertEqual(res, 1)
+        XCTAssertNoThrow(
+            try NIOBSDSocket.inet_pton(
+                addressFamily: .inet,
+                addressDescription: "10.0.0.1",
+                address: &ipv4SocketAddress.sin_addr
+            )
+        )
         ipv4SocketAddress.sin_port = (12345 as in_port_t).bigEndian
         let sa = SocketAddress(ipv4SocketAddress, host: "foobar.com")
         XCTAssertEqual("[IPv4]foobar.com/10.0.0.1:12345", sa.description)
@@ -93,7 +111,7 @@ class SocketAddressTest: XCTestCase {
         ]
 
         var address = sockaddr_in6()
-        #if os(Linux) || os(Android)  // no sin6_len on Linux/Android
+        #if os(Linux) || os(Android) || os(Windows)  // no sin6_len on Linux/Android/Windows
         #else
         address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
         #endif
@@ -604,7 +622,4 @@ class SocketAddressTest: XCTestCase {
         }
     }
 }
-#endif
-
-
 
