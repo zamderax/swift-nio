@@ -36,6 +36,7 @@ internal typealias in6_pktinfo = CNIOLinux_in6_pktinfo
 @_exported import ucrt
 
 import CNIOWindows
+import WinSDK
 
 internal typealias MMsgHdr = CNIOWindows_mmsghdr
 #else
@@ -479,6 +480,15 @@ internal enum Posix: Sendable {
     @usableFromInline
     static let SHUT_RDWR: CInt = CInt(Android.SHUT_RDWR)
     #endif
+    #elseif os(Windows)
+    @usableFromInline
+    static let UIO_MAXIOV: Int = 16
+    @usableFromInline
+    static let SHUT_RD: CInt = CInt(WinSDK.SD_RECEIVE)
+    @usableFromInline
+    static let SHUT_WR: CInt = CInt(WinSDK.SD_SEND)
+    @usableFromInline
+    static let SHUT_RDWR: CInt = CInt(WinSDK.SD_BOTH)
     #else
     @usableFromInline
     static var UIO_MAXIOV: Int {

@@ -32,3 +32,9 @@
 
 ## Cleanup
 - [x] Swap `getpid()` for `_getpid()` in `Sources/NIOHTTP1Server/main.swift:322` and `:339` to silence Windows deprecation warnings.
+
+## Platform Parity Follow-ups
+- [x] Provide Windows definitions for `Posix.UIO_MAXIOV`/`SHUT_*` (`Sources/NIOPosix/System.swift:484-497`) instead of trapping with `fatalError("unsupported OS")`.
+- [x] Implement a Windows `System.enumerateInterfaces()` path so `Tests/NIOCoreTests/UtilitiesTest.swift:26` and multicast coverage can execute.
+- [x] Populate broadcast/multicast metadata when building `NIONetworkDevice` on Windows (`Sources/NIOCore/Interfaces.swift:357`) to match POSIX behaviour.
+- [x] Revisit Windows skips for `ChannelOptions.socket` helpers in embedded tests (`Tests/NIOEmbeddedTests/AsyncTestingChannelTests.swift:691`, `EmbeddedChannelTest.swift:702`) by exposing the necessary socket constants.

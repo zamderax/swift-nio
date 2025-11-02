@@ -698,11 +698,11 @@ class EmbeddedChannelTest: XCTestCase {
     }
 
     func testGetSetOption() throws {
-        #if os(Windows)
-        try XCTSkipIf(true, "ChannelOptions.socket is unavailable on Windows")
-        #else
         let channel = EmbeddedChannel()
-        let option = ChannelOptions.socket(IPPROTO_IP, IP_TTL)
+        let option = ChannelOptions.socket(
+            NIOBSDSocket.OptionLevel.socket.rawValue,
+            NIOBSDSocket.Option.so_reuseaddr.rawValue
+        )
         let _ = channel.setOption(option, value: 1)
 
         let optionValue1 = try channel.getOption(option).wait()
@@ -711,6 +711,5 @@ class EmbeddedChannelTest: XCTestCase {
         let _ = channel.setOption(option, value: 2)
         let optionValue2 = try channel.getOption(option).wait()
         XCTAssertEqual(2, optionValue2)
-        #endif
     }
 }

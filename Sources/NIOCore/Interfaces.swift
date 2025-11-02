@@ -30,6 +30,9 @@ import let WinSDK.AF_INET6
 
 import let WinSDK.INET_ADDRSTRLEN
 import let WinSDK.INET6_ADDRSTRLEN
+import let WinSDK.IF_TYPE_PPP
+import let WinSDK.IF_TYPE_SOFTWARE_LOOPBACK
+import let WinSDK.IP_ADAPTER_NO_MULTICAST
 
 import struct WinSDK.ADDRESS_FAMILY
 import struct WinSDK.IP_ADAPTER_ADDRESSES
@@ -63,6 +66,44 @@ extension ifaddrs {
         return self.ifa_dstaddr
         #endif
     }
+}
+#endif
+
+#if os(Windows)
+@usableFromInline
+func windowsAdapterSupportsMulticast(_ adapter: UnsafeMutablePointer<IP_ADAPTER_ADDRESSES>) -> Bool {
+    if adapter.pointee.IfType == IF_TYPE_SOFTWARE_LOOPBACK {
+        return false
+    }
+    return (adapter.pointee.Flags & UInt32(IP_ADAPTER_NO_MULTICAST)) == 0
+}
+
+@usableFromInline
+func windowsBroadcastAddress(
+    adapter: UnsafeMutablePointer<IP_ADAPTER_ADDRESSES>,
+    address: SocketAddress?,
+    netmask: SocketAddress?
+) -> SocketAddress? {
+    guard adapter.pointee.IfType != IF_TYPE_SOFTWARE_LOOPBACK,
+          adapter.pointee.IfType != IF_TYPE_PPP,
+          let address,
+          case .v4(let ipv4Address) = address,
+          let netmask,
+          case .v4(let ipv4Mask) = netmask else {
+        return nil
+    }
+
+    var broadcastSockAddr = ipv4Address.address
+    let ipNetwork: UInt32 = withUnsafeBytes(of: broadcastSockAddr.sin_addr) { $0.load(as: UInt32.self) }
+    let maskNetwork: UInt32 = withUnsafeBytes(of: ipv4Mask.address.sin_addr) { $0.load(as: UInt32.self) }
+    let broadcastHostOrder = UInt32(bigEndian: ipNetwork) | ~UInt32(bigEndian: maskNetwork)
+    let broadcastNetworkOrder = broadcastHostOrder.bigEndian
+
+    withUnsafeMutableBytes(of: &broadcastSockAddr.sin_addr) { pointer in
+        pointer.storeBytes(of: broadcastNetworkOrder, as: UInt32.self)
+    }
+
+    return SocketAddress(broadcastSockAddr, host: ipv4Address.host)
 }
 #endif
 
@@ -116,23 +157,24 @@ public final class NIONetworkInterface: Sendable {
         }
         self.address = address
 
+        let netmask: SocketAddress?
+        let interfaceIndex: Int
         switch pAddress.pointee.Address.lpSockaddr.pointee.sa_family {
         case ADDRESS_FAMILY(AF_INET):
-            self.netmask = SocketAddress(ipv4MaskForPrefix: Int(pAddress.pointee.OnLinkPrefixLength))
-            self.interfaceIndex = Int(pAdapter.pointee.IfIndex)
-            break
+            netmask = SocketAddress(ipv4MaskForPrefix: Int(pAddress.pointee.OnLinkPrefixLength))
+            interfaceIndex = Int(pAdapter.pointee.IfIndex)
         case ADDRESS_FAMILY(AF_INET6):
-            self.netmask = SocketAddress(ipv6MaskForPrefix: Int(pAddress.pointee.OnLinkPrefixLength))
-            self.interfaceIndex = Int(pAdapter.pointee.Ipv6IfIndex)
-            break
+            netmask = SocketAddress(ipv6MaskForPrefix: Int(pAddress.pointee.OnLinkPrefixLength))
+            interfaceIndex = Int(pAdapter.pointee.Ipv6IfIndex)
         default:
             return nil
         }
 
-        // TODO(compnerd) handle broadcast/ppp/multicast information
-        self.broadcastAddress = nil
+        self.netmask = netmask
+        self.broadcastAddress = windowsBroadcastAddress(adapter: pAdapter, address: address, netmask: netmask)
         self.pointToPointDestinationAddress = nil
-        self.multicastSupported = false
+        self.multicastSupported = windowsAdapterSupportsMulticast(pAdapter)
+        self.interfaceIndex = interfaceIndex
     }
     #elseif !os(WASI)
     internal init?(_ caddr: ifaddrs) {
@@ -413,23 +455,24 @@ extension NIONetworkDevice {
             )
             self.address = pAddress.pointee.Address.lpSockaddr.convert()
 
+            let netmask: SocketAddress?
+            let interfaceIndex: Int
             switch pAddress.pointee.Address.lpSockaddr.pointee.sa_family {
             case ADDRESS_FAMILY(AF_INET):
-                self.netmask = SocketAddress(ipv4MaskForPrefix: Int(pAddress.pointee.OnLinkPrefixLength))
-                self.interfaceIndex = Int(pAdapter.pointee.IfIndex)
-                break
+                netmask = SocketAddress(ipv4MaskForPrefix: Int(pAddress.pointee.OnLinkPrefixLength))
+                interfaceIndex = Int(pAdapter.pointee.IfIndex)
             case ADDRESS_FAMILY(AF_INET6):
-                self.netmask = SocketAddress(ipv6MaskForPrefix: Int(pAddress.pointee.OnLinkPrefixLength))
-                self.interfaceIndex = Int(pAdapter.pointee.Ipv6IfIndex)
-                break
+                netmask = SocketAddress(ipv6MaskForPrefix: Int(pAddress.pointee.OnLinkPrefixLength))
+                interfaceIndex = Int(pAdapter.pointee.Ipv6IfIndex)
             default:
                 return nil
             }
 
-            // TODO(compnerd) handle broadcast/ppp/multicast information
-            self.broadcastAddress = nil
+            self.netmask = netmask
+            self.broadcastAddress = windowsBroadcastAddress(adapter: pAdapter, address: self.address, netmask: netmask)
             self.pointToPointDestinationAddress = nil
-            self.multicastSupported = false
+            self.multicastSupported = windowsAdapterSupportsMulticast(pAdapter)
+            self.interfaceIndex = interfaceIndex
         }
         #elseif !os(WASI)
         internal init?(_ caddr: ifaddrs) {

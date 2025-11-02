@@ -25,6 +25,7 @@ import ucrt
 import let WinSDK.RelationProcessorCore
 
 import let WinSDK.AF_UNSPEC
+import let WinSDK.ERROR_BUFFER_OVERFLOW
 import let WinSDK.ERROR_SUCCESS
 import let WinSDK.AF_INET
 import let WinSDK.IPPROTO_UDP
@@ -146,6 +147,43 @@ public enum System: Sendable {
         #endif
     }
 
+    #if os(Windows)
+    @inline(never)
+    private static func withAdapters<R>(
+        _ body: (UnsafeMutablePointer<IP_ADAPTER_ADDRESSES>?) throws -> R
+    ) throws -> R {
+        var length: ULONG = 0
+        var result = GetAdaptersAddresses(ULONG(AF_UNSPEC), 0, nil, nil, &length)
+        guard result == ERROR_SUCCESS || result == ERROR_BUFFER_OVERFLOW else {
+            throw IOError(windows: result, reason: "GetAdaptersAddresses")
+        }
+
+        let stride: Int = MemoryLayout<IP_ADAPTER_ADDRESSES>.stride
+        var buffer: UnsafeMutableBufferPointer<IP_ADAPTER_ADDRESSES>? = nil
+        defer { buffer?.deallocate() }
+
+        repeat {
+            let capacity = max(1, (Int(length) + stride - 1) / stride)
+            buffer?.deallocate()
+            buffer = UnsafeMutableBufferPointer.allocate(capacity: capacity)
+
+            result = GetAdaptersAddresses(
+                ULONG(AF_UNSPEC),
+                0,
+                nil,
+                buffer!.baseAddress,
+                &length
+            )
+        } while result == ERROR_BUFFER_OVERFLOW
+
+        guard result == ERROR_SUCCESS else {
+            throw IOError(windows: result, reason: "GetAdaptersAddresses")
+        }
+
+        return try body(buffer!.baseAddress)
+    }
+    #endif
+
     #if !os(Windows) && !os(WASI)
     /// A utility function that enumerates the available network interfaces on this machine.
     ///
@@ -176,6 +214,28 @@ public enum System: Sendable {
 
         return interfaces
     }
+    #elseif os(Windows)
+    @available(*, deprecated, renamed: "enumerateDevices")
+    public static func enumerateInterfaces() throws -> [NIONetworkInterface] {
+        var interfaces: [NIONetworkInterface] = []
+        interfaces.reserveCapacity(12)
+
+        try self.withAdapters { head in
+            var adapter = head
+            while let currentAdapter = adapter {
+                var unicast = currentAdapter.pointee.FirstUnicastAddress
+                while let currentUnicast = unicast {
+                    if let interface = NIONetworkInterface(currentAdapter, currentUnicast) {
+                        interfaces.append(interface)
+                    }
+                    unicast = currentUnicast.pointee.Next
+                }
+                adapter = currentAdapter.pointee.Next
+            }
+        }
+
+        return interfaces
+    }
     #endif
 
     /// A utility function that enumerates the available network devices on this machine.
@@ -191,42 +251,18 @@ public enum System: Sendable {
         devices.reserveCapacity(12)  // Arbitrary choice.
 
         #if os(Windows)
-        var ulSize: ULONG = 0
-        _ = GetAdaptersAddresses(ULONG(AF_UNSPEC), 0, nil, nil, &ulSize)
-
-        let stride: Int = MemoryLayout<IP_ADAPTER_ADDRESSES>.stride
-        let pBuffer: UnsafeMutableBufferPointer<IP_ADAPTER_ADDRESSES> =
-            UnsafeMutableBufferPointer.allocate(capacity: Int(ulSize) / stride)
-        defer {
-            pBuffer.deallocate()
-        }
-
-        let ulResult: ULONG =
-            GetAdaptersAddresses(
-                ULONG(AF_UNSPEC),
-                0,
-                nil,
-                pBuffer.baseAddress,
-                &ulSize
-            )
-        guard ulResult == ERROR_SUCCESS else {
-            throw IOError(windows: ulResult, reason: "GetAdaptersAddresses")
-        }
-
-        var pAdapter: UnsafeMutablePointer<IP_ADAPTER_ADDRESSES>? =
-            UnsafeMutablePointer(pBuffer.baseAddress)
-        while pAdapter != nil {
-            let pUnicastAddresses: UnsafeMutablePointer<IP_ADAPTER_UNICAST_ADDRESS>? =
-                pAdapter!.pointee.FirstUnicastAddress
-            var pUnicastAddress: UnsafeMutablePointer<IP_ADAPTER_UNICAST_ADDRESS>? =
-                pUnicastAddresses
-            while pUnicastAddress != nil {
-                if let device = NIONetworkDevice(pAdapter!, pUnicastAddress!) {
-                    devices.append(device)
+        try self.withAdapters { head in
+            var adapter = head
+            while let currentAdapter = adapter {
+                var unicast = currentAdapter.pointee.FirstUnicastAddress
+                while let currentUnicast = unicast {
+                    if let device = NIONetworkDevice(currentAdapter, currentUnicast) {
+                        devices.append(device)
+                    }
+                    unicast = currentUnicast.pointee.Next
                 }
-                pUnicastAddress = pUnicastAddress!.pointee.Next
+                adapter = currentAdapter.pointee.Next
             }
-            pAdapter = pAdapter!.pointee.Next
         }
         #elseif !os(WASI)
         var interface: UnsafeMutablePointer<ifaddrs>? = nil

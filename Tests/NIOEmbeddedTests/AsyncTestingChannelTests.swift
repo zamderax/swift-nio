@@ -687,11 +687,11 @@ class AsyncTestingChannelTests: XCTestCase {
     }
 
     func testGetSetOption() async throws {
-        #if os(Windows)
-        throw XCTSkip("ChannelOptions.socket is unavailable on Windows")
-        #else
         let channel = NIOAsyncTestingChannel()
-        let option = ChannelOptions.socket(IPPROTO_IP, IP_TTL)
+        let option = ChannelOptions.socket(
+            NIOBSDSocket.OptionLevel.socket.rawValue,
+            NIOBSDSocket.Option.so_reuseaddr.rawValue
+        )
         let _ = try await channel.setOption(option, value: 1).get()
 
         let optionValue1 = try await channel.getOption(option).get()
@@ -700,7 +700,6 @@ class AsyncTestingChannelTests: XCTestCase {
         let _ = try await channel.setOption(option, value: 2).get()
         let optionValue2 = try await channel.getOption(option).get()
         XCTAssertEqual(2, optionValue2)
-        #endif
     }
 }
 
