@@ -12,11 +12,21 @@
 //
 //===----------------------------------------------------------------------===//
 
-import CNIOLinux
+#if os(Windows)
 import XCTest
 
 @testable import NIOPosix
 
+final class ControlMessageTests: XCTestCase {
+    func testControlMessagesUnsupportedOnWindows() throws {
+        throw XCTSkip("Control message helpers are unavailable on Windows")
+    }
+}
+#else
+import CNIOLinux
+import XCTest
+
+@testable import NIOPosix
 extension UnsafeControlMessageCollection {
     fileprivate init(controlBytes: UnsafeMutableRawBufferPointer) {
         let msgHdr = msghdr(
@@ -128,3 +138,5 @@ class ControlMessageTests: XCTestCase {
         XCTAssertGreaterThan(storage[2].count, MemoryLayout<cmsghdr>.stride)
     }
 }
+#endif
+

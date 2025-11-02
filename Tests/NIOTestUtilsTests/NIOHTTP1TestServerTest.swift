@@ -18,6 +18,16 @@ import NIOPosix
 import NIOTestUtils
 import XCTest
 
+#if canImport(WinSDK)
+import WinSDK
+
+@inline(__always)
+private func usleep(_ usecs: UInt32) {
+    let milliseconds = (usecs + 999) / 1000
+    Sleep(DWORD(milliseconds))
+}
+#endif
+
 typealias SendableRequestPart = HTTPPart<HTTPRequestHead, ByteBuffer>
 
 extension HTTPClientRequestPart {

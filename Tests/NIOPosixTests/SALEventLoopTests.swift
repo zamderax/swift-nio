@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class SALEventLoopTests: XCTestCase {
+    func testSALUnsupportedOnWindows() throws {
+        throw XCTSkip("SAL event loop tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -57,3 +67,5 @@ final class SALEventLoopTests: XCTestCase {
         }
     }
 }
+#endif
+

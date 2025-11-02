@@ -17,6 +17,21 @@ import XCTest
 
 #if canImport(Android)
 import Android
+#elseif canImport(WinSDK)
+import WinSDK
+
+@inline(__always)
+private func nioTestsUsleep(_ usecs: UInt32) {
+    let milliseconds = (usecs + 999) / 1000
+    Sleep(DWORD(milliseconds))
+}
+#endif
+
+#if !canImport(WinSDK)
+@inline(__always)
+private func nioTestsUsleep(_ usecs: UInt32) {
+    usleep(usecs)
+}
 #endif
 
 func assert(
@@ -32,7 +47,7 @@ func assert(
 
     repeat {
         if condition() { return }
-        usleep(UInt32(testInterval.nanoseconds / 1000))
+        nioTestsUsleep(UInt32(testInterval.nanoseconds / 1000))
     } while NIODeadline.now() < endTime
 
     if !condition() {

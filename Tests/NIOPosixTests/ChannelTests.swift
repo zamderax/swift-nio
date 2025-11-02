@@ -2979,6 +2979,9 @@ final class ChannelTests: XCTestCase {
     }
 
     func testCloseInReadTriggeredByDrainingTheReceiveBufferBecauseOfWriteError() throws {
+        #if os(Windows)
+        throw XCTSkip("Draining the receive buffer on write error is unsupported on Windows")
+        #else
         final class WriteWhenActiveHandler: ChannelInboundHandler, Sendable {
             typealias InboundIn = ByteBuffer
             typealias OutboundOut = ByteBuffer
@@ -3130,9 +3133,13 @@ final class ChannelTests: XCTestCase {
 
         XCTAssertNoThrow(try allDonePromise.futureResult.wait())
         XCTAssertFalse(c.isActive)
+        #endif
     }
 
     func testApplyingTwoDistinctSocketOptionsOfSameTypeWorks() throws {
+        #if os(Windows)
+        throw XCTSkip("SO_TIMESTAMP is unavailable on Windows")
+        #else
         let singleThreadedELG = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer {
             XCTAssertNoThrow(try singleThreadedELG.syncShutdownGracefully())
@@ -3218,6 +3225,7 @@ final class ChannelTests: XCTestCase {
         XCTAssertTrue(try getBoolSocketOption(channel: accepted3, level: .socket, name: .so_keepalive))
 
         XCTAssertFalse(try getBoolSocketOption(channel: accepted3, level: .tcp, name: .tcp_nodelay))
+        #endif
     }
 
     func testUnprocessedOutboundUserEventFailsOnServerSocketChannel() throws {
@@ -3641,6 +3649,7 @@ final class ReentrantWritabilityChangingHandler: ChannelInboundHandler {
     }
 }
 
+#if !os(Windows)
 private func veryNasty_blockUntilReadBufferIsNonEmpty(channel: Channel) throws {
     struct ThisIsNotASocketChannelError: Error {}
     guard let channel = channel as? SocketChannel else {
@@ -3653,3 +3662,7 @@ private func veryNasty_blockUntilReadBufferIsNonEmpty(channel: Channel) throws {
         XCTAssertEqual(1, nfds)
     }
 }
+#endif
+
+
+

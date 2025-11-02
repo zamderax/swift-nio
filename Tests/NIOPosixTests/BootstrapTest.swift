@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class BootstrapTest: XCTestCase {
+    func testBootstrapUnsupportedOnWindows() throws {
+        throw XCTSkip("Bootstrap tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -931,3 +941,5 @@ private final class MakeSureAutoReadIsOffInChannelInitializer: ChannelInboundHan
         }
     }
 }
+#endif
+

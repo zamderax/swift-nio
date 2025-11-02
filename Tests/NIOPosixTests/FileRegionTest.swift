@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class FileRegionTest: XCTestCase {
+    func testFileRegionUnsupportedOnWindows() throws {
+        throw XCTSkip("File region tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -362,3 +372,5 @@ class FileRegionTest: XCTestCase {
         )
     }
 }
+#endif
+

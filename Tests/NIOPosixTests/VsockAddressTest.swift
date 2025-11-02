@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class VsockAddressTest: XCTestCase {
+    func testVsockAddressUnsupportedOnWindows() throws {
+        throw XCTSkip("Vsock address tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -81,3 +91,5 @@ class VsockAddressTest: XCTestCase {
         XCTAssertEqual(try channel.getOption(.localVsockContextID).wait(), localCID)
     }
 }
+#endif
+

@@ -1,4 +1,12 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+final class HappyEyeballsTest: XCTestCase {
+    func testWindowsNotSupported() throws {
+        throw XCTSkip("HappyEyeballs tests rely on POSIX networking not available on Windows yet")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -1468,3 +1476,4 @@ struct ChannelSet: Sendable, Sequence {
         self.channels.withLockedValue { $0 }.finishAll()
     }
 }
+#endif

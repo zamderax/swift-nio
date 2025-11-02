@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class SALChannelTests: XCTestCase {
+    func testSALChannelUnsupportedOnWindows() throws {
+        throw XCTSkip("SAL channel tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -1128,3 +1138,6 @@ final class SALChannelTest: XCTestCase {
         }
     }
 }
+
+#endif
+

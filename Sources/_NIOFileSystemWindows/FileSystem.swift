@@ -118,7 +118,7 @@ public struct FileInfo: Sendable {
     public let lastAccessDate: Date?
     public let isHidden: Bool
 
-    fileprivate init(
+    init(
         path: FilePath,
         type: FileType,
         size: UInt64,

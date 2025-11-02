@@ -217,6 +217,8 @@ internal class Selector<R: Registration> {
     typealias EventType = WinSDK.pollfd
     @usableFromInline
     var pollFDs = [WinSDK.pollfd]()
+    @usableFromInline
+    var pollFDIndices = [UInt64: Int]()
     #else
     #error("Unsupported platform, no suitable selector backend (we need kqueue or epoll support)")
     #endif

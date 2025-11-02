@@ -421,11 +421,6 @@ class DatagramChannelTests: XCTestCase {
         try assertRecvMsgFails(error: EFAULT, active: false)
     }
 
-#if os(Windows)
-    private func assertRecvMsgFails(error: Int32, active: Bool) throws {
-        throw XCTSkip("recvmsg is unavailable on Windows")
-    }
-#else
     private func assertRecvMsgFails(error: Int32, active: Bool) throws {
         final class RecvFromHandler: ChannelInboundHandler, Sendable {
             typealias InboundIn = AddressedEnvelope<ByteBuffer>
@@ -496,7 +491,6 @@ class DatagramChannelTests: XCTestCase {
         let ioError = try promise.futureResult.wait()
         XCTAssertEqual(error, ioError.errnoCode)
     }
-#endif
 
     public func testRecvMmsgFailsWithECONNREFUSED() throws {
         try assertRecvMmsgFails(error: ECONNREFUSED, active: true)
@@ -611,9 +605,6 @@ class DatagramChannelTests: XCTestCase {
     }
 
     func testSettingTwoDistinctChannelOptionsWorksForDatagramChannel() throws {
-        #if os(Windows)
-        throw XCTSkip("Datagram socket option tests are unsupported on Windows")
-        #else
         let channel = try assertNoThrowWithValue(
             DatagramBootstrap(group: group)
                 .channelOption(.socketOption(.so_reuseaddr), value: 1)
@@ -627,7 +618,6 @@ class DatagramChannelTests: XCTestCase {
         XCTAssertTrue(try getBoolSocketOption(channel: channel, level: .socket, name: .so_reuseaddr))
         XCTAssertTrue(try getBoolSocketOption(channel: channel, level: .socket, name: .so_timestamp))
         XCTAssertFalse(try getBoolSocketOption(channel: channel, level: .socket, name: .so_keepalive))
-        #endif
     }
 
     func testUnprocessedOutboundUserEventFailsOnDatagramChannel() throws {

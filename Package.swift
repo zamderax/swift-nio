@@ -35,7 +35,7 @@ let isWindows = false
 
 // These platforms require a dependency on `NIOPosix` from `NIOHTTP1` to maintain backward
 // compatibility with previous NIO versions.
-let historicalNIOPosixDependencyRequired: [Platform] = [.macOS, .iOS, .tvOS, .watchOS, .linux, .android]
+let historicalNIOPosixDependencyRequired: [Platform] = [.macOS, .iOS, .tvOS, .watchOS, .linux, .android, .windows]
 
 let swiftSettings: [SwiftSetting] = []
 
@@ -675,6 +675,12 @@ if isWindows {
             path: "Sources/NIOFileSystemWindows"
         ),
     ]
+
+    if let nioHTTP1TestsIndex = package.targets.firstIndex(where: { $0.name == "NIOHTTP1Tests" }) {
+        var target = package.targets[nioHTTP1TestsIndex]
+        target.exclude.append("TestUtils.swift")
+        package.targets[nioHTTP1TestsIndex] = target
+    }
 }
 
 if Context.environment["SWIFTCI_USE_LOCAL_DEPS"] == nil {

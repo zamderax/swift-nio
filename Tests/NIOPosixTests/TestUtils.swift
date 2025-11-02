@@ -42,6 +42,11 @@ extension System {
     }
 }
 
+#if os(Windows)
+func withPipe(_ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) throws -> [NIOCore.NIOFileHandle]) throws {
+    throw XCTSkip("Pipe-based test utilities are unsupported on Windows")
+}
+#else
 func withPipe(_ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) throws -> [NIOCore.NIOFileHandle]) throws {
     var fds: [Int32] = [-1, -1]
     fds.withUnsafeMutableBufferPointer { ptr in
@@ -63,7 +68,16 @@ func withPipe(_ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) throws -> [
         throw error
     }
 }
+#endif
 
+#if os(Windows)
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+func withPipe(
+    _ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) async throws -> [NIOCore.NIOFileHandle]
+) async throws {
+    throw XCTSkip("Pipe-based test utilities are unsupported on Windows")
+}
+#else
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
 func withPipe(
     _ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) async throws -> [NIOCore.NIOFileHandle]
@@ -88,6 +102,7 @@ func withPipe(
         throw error
     }
 }
+#endif
 
 // swift-format-ignore: AmbiguousTrailingClosureOverload
 func withTemporaryDirectory<T>(_ body: (String) throws -> T) rethrows -> T {
@@ -111,6 +126,14 @@ func withTemporaryDirectory<T>(_ body: (String) async throws -> T) async rethrow
 ///
 /// If the temporary directory is too long to store a UNIX domain socket path, it will `chdir` into the temporary
 /// directory and return a short-enough path. The iOS simulator is known to have too long paths.
+#if os(Windows)
+func withTemporaryUnixDomainSocketPathName<T>(
+    directory: String = temporaryDirectory,
+    _ body: (String) throws -> T
+) throws -> T {
+    throw XCTSkip("UNIX domain socket path helpers are unsupported on Windows")
+}
+#else
 func withTemporaryUnixDomainSocketPathName<T>(
     directory: String = temporaryDirectory,
     _ body: (String) throws -> T
@@ -148,7 +171,16 @@ func withTemporaryUnixDomainSocketPathName<T>(
     }
     return try body(shortEnoughPath)
 }
+#endif
 
+#if os(Windows)
+func withTemporaryFile<T>(
+    content: String? = nil,
+    _ body: (NIOCore.NIOFileHandle, String) throws -> T
+) throws -> T {
+    throw XCTSkip("Temporary file helpers are unsupported on Windows")
+}
+#else
 func withTemporaryFile<T>(
     content: String? = nil,
     _ body: (NIOCore.NIOFileHandle, String) throws -> T
@@ -179,7 +211,17 @@ func withTemporaryFile<T>(
     }
     return try body(fileHandle, path)
 }
+#endif
 
+#if os(Windows)
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+func withTemporaryFile<T>(
+    content: String? = nil,
+    _ body: @escaping (NIOCore.NIOFileHandle, String) async throws -> T
+) async throws -> T {
+    throw XCTSkip("Temporary file helpers are unsupported on Windows")
+}
+#else
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
 func withTemporaryFile<T>(
     content: String? = nil,
@@ -211,6 +253,7 @@ func withTemporaryFile<T>(
     }
     return try await body(fileHandle, path)
 }
+#endif
 var temporaryDirectory: String {
     get {
         #if targetEnvironment(simulator)
@@ -220,6 +263,8 @@ var temporaryDirectory: String {
         #else
         #if os(Linux)
         return "/tmp"
+        #elseif os(Windows)
+        return FileManager.default.temporaryDirectory.path
         #else
         if #available(macOS 10.12, iOS 10, tvOS 10, watchOS 3, *) {
             return FileManager.default.temporaryDirectory.path
@@ -231,6 +276,17 @@ var temporaryDirectory: String {
     }
 }
 
+#if os(Windows)
+func createTemporaryDirectory() -> String {
+    let baseURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    do {
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: false)
+    } catch {
+        XCTFail("failed to create temporary directory: \(error)")
+    }
+    return baseURL.path
+}
+#else
 func createTemporaryDirectory() -> String {
     let template = "\(temporaryDirectory)/.NIOTests-temp-dir_XXXXXX"
 
@@ -246,7 +302,13 @@ func createTemporaryDirectory() -> String {
     templateBytes.removeLast()
     return String(decoding: templateBytes, as: Unicode.UTF8.self)
 }
+#endif
 
+#if os(Windows)
+func openTemporaryFile() -> (CInt, String) {
+    fatalError("openTemporaryFile is unsupported on Windows")
+}
+#else
 func openTemporaryFile() -> (CInt, String) {
     let template = "\(temporaryDirectory)/nio_XXXXXX"
     var templateBytes = template.utf8 + [0]
@@ -260,6 +322,7 @@ func openTemporaryFile() -> (CInt, String) {
     templateBytes.removeLast()
     return (fd, String(decoding: templateBytes, as: Unicode.UTF8.self))
 }
+#endif
 
 extension Channel {
     func syncCloseAcceptingAlreadyClosed() throws {
@@ -863,3 +926,13 @@ extension EventLoopFuture {
         }
     }
 }
+
+
+
+
+
+
+
+
+
+

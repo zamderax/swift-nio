@@ -1,0 +1,4 @@
+module CNIOPosix {
+    header "CNIOPosix.h"
+    export *
+}

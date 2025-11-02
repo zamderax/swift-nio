@@ -24,6 +24,20 @@ import Darwin
 import Glibc
 #elseif canImport(Android)
 import Android
+#elseif canImport(WinSDK)
+import WinSDK
+
+@inline(__always)
+private func usleep(_ usecs: UInt32) {
+    // Sleep expects milliseconds; round up partial milliseconds to avoid undersleeping.
+    let milliseconds = (usecs + 999) / 1000
+    Sleep(DWORD(milliseconds))
+}
+
+@inline(__always)
+private func usleep(_ usecs: Int) {
+    usleep(UInt32(usecs))
+}
 #else
 #error("The Concurrency helpers test module was unable to identify your C library.")
 #endif

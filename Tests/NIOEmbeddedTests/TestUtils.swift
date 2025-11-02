@@ -19,6 +19,14 @@ import XCTest
 
 #if canImport(Android)
 import Android
+#elseif canImport(WinSDK)
+import WinSDK
+
+@inline(__always)
+private func usleep(_ usecs: UInt32) {
+    let milliseconds = (usecs + 999) / 1000
+    Sleep(DWORD(milliseconds))
+}
 #endif
 
 // FIXME: Duplicated with NIO

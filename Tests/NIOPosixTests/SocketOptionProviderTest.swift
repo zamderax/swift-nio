@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class SocketOptionProviderTest: XCTestCase {
+    func testSocketOptionsUnsupportedOnWindows() throws {
+        throw XCTSkip("Socket option provider tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -351,3 +361,6 @@ final class SocketOptionProviderTest: XCTestCase {
         #endif
     }
 }
+
+#endif
+

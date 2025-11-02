@@ -234,9 +234,13 @@ class ChannelPipelineTest: XCTestCase {
         defer {
             XCTAssertTrue(try channel.finish().isClean)
         }
+        #if os(Windows)
+        let sa = try SocketAddress(ipAddress: "127.0.0.1", port: 12345)
+        #else
         var ipv4SocketAddress = sockaddr_in()
         ipv4SocketAddress.sin_port = (12345 as in_port_t).bigEndian
         let sa = SocketAddress(ipv4SocketAddress, host: "foobar.com")
+        #endif
 
         XCTAssertNoThrow(try channel.pipeline.syncOperations.addHandler(NoBindAllowed()))
         XCTAssertNoThrow(
@@ -2855,3 +2859,4 @@ final class TestAddMultipleHandlersHandlerWorkingAroundSR9956: ChannelDuplexHand
         lhs === rhs
     }
 }
+

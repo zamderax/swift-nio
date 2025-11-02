@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class MulticastTest: XCTestCase {
+    func testMulticastUnsupportedOnWindows() throws {
+        throw XCTSkip("Multicast tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -802,3 +812,6 @@ final class MulticastTest: XCTestCase {
         )
     }
 }
+
+#endif
+

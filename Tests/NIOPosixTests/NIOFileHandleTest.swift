@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class NIOFileHandleTest: XCTestCase {
+    func testNIOFileHandleUnsupportedOnWindows() throws {
+        throw XCTSkip("NIOFileHandle tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -169,3 +179,5 @@ final class NIOFileHandleTest: XCTestCase {
         return (pipeFDs[0], pipeFDs[1])
     }
 }
+#endif
+

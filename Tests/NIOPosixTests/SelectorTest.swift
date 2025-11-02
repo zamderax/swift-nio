@@ -19,6 +19,16 @@ import XCTest
 
 @testable import NIOPosix
 
+#if os(Windows)
+
+class SelectorTest: XCTestCase {
+    func testSelectorUnsupportedOnWindows() throws {
+        throw XCTSkip("Selector-based tests rely on POSIX-specific behavior and are unsupported on Windows")
+    }
+}
+
+#else
+
 class SelectorTest: XCTestCase {
 
     func testDeregisterWhileProcessingEvents() throws {
@@ -505,3 +515,5 @@ class SelectorTest: XCTestCase {
         XCTAssertNoThrow(try channelHasBeenClosedPromise.futureResult.wait())
     }
 }
+#endif
+

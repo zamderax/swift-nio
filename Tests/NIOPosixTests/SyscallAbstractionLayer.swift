@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class SyscallAbstractionLayerTest: XCTestCase {
+    func testSyscallAbstractionLayerUnsupportedOnWindows() throws {
+        throw XCTSkip("Syscall abstraction layer tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -1146,3 +1156,6 @@ struct SyscallAssertions: @unchecked Sendable {
         try self.selector.assertParkedRightNow(file: file, line: line)
     }
 }
+
+#endif
+

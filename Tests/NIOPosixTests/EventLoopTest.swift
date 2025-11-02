@@ -1442,7 +1442,10 @@ final class EventLoopTest: XCTestCase {
         XCTAssertNil(MultiThreadedEventLoopGroup.currentEventLoop)
     }
 
-    func testWeCanDoTrulySingleThreadedNetworking() {
+    func testWeCanDoTrulySingleThreadedNetworking() throws {
+        #if os(Windows)
+        throw XCTSkip("Single-threaded networking bootstrap options are unsupported on Windows")
+        #else
         final class SaveReceivedByte: ChannelInboundHandler {
             typealias InboundIn = ByteBuffer
 
@@ -1511,6 +1514,7 @@ final class EventLoopTest: XCTestCase {
 
         // All done, the EventLoop is terminated so we should be able to check the results.
         XCTAssertEqual(UInt8(ascii: "J"), received.withLockedValue { $0 })
+        #endif
     }
 
     func testWeFailOutstandingScheduledTasksOnELShutdown() {
@@ -2236,3 +2240,5 @@ final class EventLoopGroupOf3WithoutAnAnyImplementation: EventLoopGroup {
         .init(self.eventloops)
     }
 }
+
+

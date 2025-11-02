@@ -1,4 +1,12 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+final class SystemTest: XCTestCase {
+    func testWindowsNotSupported() throws {
+        throw XCTSkip("System control message tests unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -93,7 +101,7 @@ class SystemTest: XCTestCase {
     // Example twin data options captured on Linux
     private static let cmsghdrExample: [UInt8] = [
         0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Length 28 including header.
-        0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,  // IPPROTO_IP, IP_PKTINFO
+        0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,  // IPPROTO_IP,Â IP_PKTINFO
         0x01, 0x00, 0x00, 0x00, 0x7F, 0x00, 0x00, 0x01,  // interface number, 127.0.0.1 (local)
         0x7F, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,  // 127.0.0.1 (destination), 4 bytes to align length
         0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Length 17
@@ -185,3 +193,4 @@ class SystemTest: XCTestCase {
         }
     }
 }
+#endif

@@ -1,4 +1,14 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class PendingDatagramWritesManagerTests: XCTestCase {
+    func testPendingDatagramWritesUnsupportedOnWindows() throws {
+        throw XCTSkip("Pending datagram writes tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -850,3 +860,6 @@ class PendingDatagramWritesManagerTests: XCTestCase {
         }
     }
 }
+
+#endif
+

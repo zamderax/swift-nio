@@ -12,12 +12,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-import CNIOLinux
+#if os(Windows)
 import XCTest
 
 @testable import NIOCore
 @testable import NIOPosix
 
+final class SocketAddressTest: XCTestCase {
+    func testSocketAddressPosixFeaturesUnsupportedOnWindows() throws {
+        throw XCTSkip("SocketAddress POSIX-focused tests are unsupported on Windows")
+    }
+}
+#else
+import CNIOLinux
+import XCTest
+
+@testable import NIOCore
+@testable import NIOPosix
 class SocketAddressTest: XCTestCase {
 
     func testDescriptionWorks() throws {
@@ -593,3 +604,7 @@ class SocketAddressTest: XCTestCase {
         }
     }
 }
+#endif
+
+
+

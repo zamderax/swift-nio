@@ -1,4 +1,16 @@
-//===----------------------------------------------------------------------===//
+#if os(Windows)
+import NIOConcurrencyHelpers
+import NIOCore
+import XCTest
+
+@testable import NIOPosix
+
+final class NonBlockingFileIOTest: XCTestCase {
+    func testNonBlockingFileIOSkippedOnWindows() throws {
+        throw XCTSkip("Non-blocking file IO tests are unsupported on Windows")
+    }
+}
+#else//===----------------------------------------------------------------------===//
 //
 // This source file is part of the SwiftNIO open source project
 //
@@ -1965,3 +1977,6 @@ extension NonBlockingFileIOTest {
         }
     }
 }
+
+#endif
+

@@ -67,6 +67,7 @@ extension Selector: _SelectorBackendProtocol {
 
     func initialiseState0() throws {
         self.pollFDs.reserveCapacity(16)
+        self.pollFDIndices.reserveCapacity(16)
     }
 
     func deinitAssertions0() {
@@ -145,10 +146,12 @@ extension Selector: _SelectorBackendProtocol {
         interested: SelectorEventSet,
         registrationID: SelectorRegistrationID
     ) throws {
-        // TODO (@fabian): We need to replace the pollFDs array with something
-        //                 that will allow O(1) access here.
-        let poll = pollfd(fd: UInt64(fileDescriptor), events: interested.wsaPollEvent, revents: 0)
+        let fdKey: UInt64 = numericCast(fileDescriptor)
+        assert(self.pollFDIndices[fdKey] == nil, "File descriptor \(fileDescriptor) registered twice")
+
+        let poll = pollfd(fd: fdKey, events: interested.wsaPollEvent, revents: 0)
         self.pollFDs.append(poll)
+        self.pollFDIndices[fdKey] = self.pollFDs.count - 1
     }
 
     func reregister0(
@@ -158,7 +161,16 @@ extension Selector: _SelectorBackendProtocol {
         newInterested: SelectorEventSet,
         registrationID: SelectorRegistrationID
     ) throws {
-        fatalError("TODO: Unimplemented")
+        let fdKey: UInt64 = numericCast(fileDescriptor)
+        guard let index = self.pollFDIndices[fdKey] else {
+            assert(
+                self.lifecycleState != .open,
+                "Attempted to reregister unknown descriptor \(fileDescriptor)"
+            )
+            return
+        }
+
+        self.pollFDs[index].events = newInterested.wsaPollEvent
     }
 
     func deregister0(
@@ -167,7 +179,19 @@ extension Selector: _SelectorBackendProtocol {
         oldInterested: SelectorEventSet,
         registrationID: SelectorRegistrationID
     ) throws {
-        fatalError("TODO: Unimplemented")
+        let fdKey: UInt64 = numericCast(fileDescriptor)
+        guard let index = self.pollFDIndices.removeValue(forKey: fdKey) else {
+            return
+        }
+
+        let lastIndex = self.pollFDs.count - 1
+        if index != lastIndex {
+            self.pollFDs.swapAt(index, lastIndex)
+            let movedFDKey: UInt64 = numericCast(self.pollFDs[index].fd)
+            self.pollFDIndices[movedFDKey] = index
+        }
+
+        self.pollFDs.removeLast()
     }
 
     func wakeup0() throws {
@@ -185,6 +209,7 @@ extension Selector: _SelectorBackendProtocol {
 
     func close0() throws {
         self.pollFDs.removeAll()
+        self.pollFDIndices.removeAll(keepingCapacity: false)
     }
 }
 

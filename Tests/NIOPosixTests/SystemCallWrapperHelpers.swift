@@ -14,6 +14,34 @@
 
 import Foundation
 
+#if os(Windows)
+import XCTest
+
+#if !RUNNING_INTEGRATION_TESTS
+@testable import NIOPosix
+#endif
+
+enum TestError: Error {
+    case writeFailed
+    case wouldBlock
+}
+
+public func measureRunTime(_ body: () throws -> Int) rethrows -> TimeInterval {
+    _ = try body()
+    return 0
+}
+
+public func measureRunTimeAndPrint(desc: String, body: () throws -> Int) rethrows {
+    _ = try measureRunTime(body)
+}
+
+func runSystemCallWrapperPerformanceTest(
+    testAssertFunction: (@autoclosure () -> Bool, @autoclosure () -> String, StaticString, UInt) -> Void,
+    debugModeAllowed: Bool
+) throws {
+    throw XCTSkip("System call wrapper performance helpers are unsupported on Windows")
+}
+#else
 #if !RUNNING_INTEGRATION_TESTS
 @testable import NIOPosix
 #endif
@@ -136,3 +164,6 @@ func runSystemCallWrapperPerformanceTest(
         #line
     )
 }
+#endif
+
+
