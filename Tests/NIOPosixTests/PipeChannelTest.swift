@@ -12,6 +12,17 @@
 //
 //===----------------------------------------------------------------------===//
 
+#if os(Windows)
+import XCTest
+
+@testable import NIOPosix
+
+final class PipeChannelTest: XCTestCase {
+    func testPipeUnsupportedOnWindows() throws {
+        throw XCTSkip("PipeChannel is not implemented on Windows yet")
+    }
+}
+#else
 import Foundation
 import NIOCore
 import NIOTestUtils
@@ -279,3 +290,4 @@ extension FileHandle {
         return buffer
     }
 }
+#endif

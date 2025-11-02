@@ -64,6 +64,9 @@ final class EventLoopTest: XCTestCase {
     }
 
     func testScheduleWithDelay() throws {
+        #if os(Windows)
+        throw XCTSkip("SO_REUSEADDR bootstrap options are unavailable on Windows")
+        #else
         let smallAmount: TimeAmount = .milliseconds(100)
         let longAmount: TimeAmount = .seconds(1)
         let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -102,6 +105,7 @@ final class EventLoopTest: XCTestCase {
         XCTAssertTrue(try assertNoThrowWithValue(try longFuture.wait()))
         // Now we're ok.
         XCTAssertTrue(NIODeadline.now() - nanos >= longAmount)
+        #endif
     }
 
     func testScheduleCancelled() throws {
@@ -478,6 +482,9 @@ final class EventLoopTest: XCTestCase {
     }
 
     func testMultipleShutdown() throws {
+        #if os(Windows)
+        throw XCTSkip("SO_REUSEADDR bootstrap options are unavailable on Windows")
+        #else
         // This test catches a regression that causes it to intermittently fail: it reveals bugs in synchronous shutdown.
         // Do not ignore intermittent failures in this test!
         let threads = 8
@@ -510,6 +517,7 @@ final class EventLoopTest: XCTestCase {
 
         // We should now shut down gracefully.
         try group.syncShutdownGracefully()
+        #endif
     }
 
     func testShuttingDownFailsRegistration() throws {
@@ -1253,7 +1261,10 @@ final class EventLoopTest: XCTestCase {
         g.wait()
     }
 
-    func testSchedulingTaskOnTheEventLoopWithinTheEventLoopsOnlyIOOperation() {
+    func testSchedulingTaskOnTheEventLoopWithinTheEventLoopsOnlyIOOperation() throws {
+        #if os(Windows)
+        throw XCTSkip("SO_REUSEADDR bootstrap options are unavailable on Windows")
+        #else
         final class ExecuteSomethingOnEventLoop: ChannelInboundHandler {
             typealias InboundIn = ByteBuffer
 
@@ -1323,6 +1334,7 @@ final class EventLoopTest: XCTestCase {
 
         // The executed task should've notified this DispatchGroup
         g.wait()
+        #endif
     }
 
     func testCancellingTheLastOutstandingTask() {
