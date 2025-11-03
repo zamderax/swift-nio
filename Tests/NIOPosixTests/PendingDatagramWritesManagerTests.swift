@@ -32,7 +32,8 @@ extension SocketAddress {
         switch NIOBSDSocket.AddressFamily(rawValue: CInt(addr.pointee.sa_family)) {
         case .unix:
 #if os(Windows)
-            fatalError("Unix domain sockets are unsupported for datagrams on Windows")
+            XCTFail("Unix domain sockets are unsupported for datagrams on Windows")
+            self = try! SocketAddress(ipAddress: "127.0.0.1", port: 0)
 #else
             self = SocketAddress(erased.load(as: sockaddr_un.self))
 #endif
@@ -53,7 +54,8 @@ extension SocketAddress {
             return PlatformSocklenT(MemoryLayout<sockaddr_in6>.size)
         case .unixDomainSocket:
 #if os(Windows)
-            fatalError("Unix domain sockets are unsupported for datagrams on Windows")
+            XCTFail("Unix domain sockets are unsupported for datagrams on Windows")
+            return PlatformSocklenT(MemoryLayout<sockaddr_in>.size)
 #else
             return socklen_t(MemoryLayout<sockaddr_un>.size)
 #endif

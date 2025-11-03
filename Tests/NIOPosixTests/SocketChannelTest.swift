@@ -36,6 +36,31 @@ extension Array {
 }
 
 final class SocketChannelTest: XCTestCase {
+    #if os(Windows)
+    private func duplicateSocketHandle(_ handle: NIOBSDSocket.Handle) throws -> NIOBSDSocket.Handle {
+        var protocolInfo = WSAPROTOCOL_INFOW()
+        guard WSADuplicateSocketW(handle, GetCurrentProcessId(), &protocolInfo) == 0 else {
+            throw IOError(winsock: WSAGetLastError(), reason: "WSADuplicateSocketW")
+        }
+        let duplicated = WSASocketW(
+            Int32(protocolInfo.iAddressFamily),
+            Int32(protocolInfo.iSocketType),
+            Int32(protocolInfo.iProtocol),
+            &protocolInfo,
+            0,
+            0
+        )
+        guard duplicated != INVALID_SOCKET else {
+            throw IOError(winsock: WSAGetLastError(), reason: "WSASocketW")
+        }
+        return duplicated
+    }
+    #else
+    private func duplicateSocketHandle(_ handle: NIOBSDSocket.Handle) throws -> NIOBSDSocket.Handle {
+        try Posix.dup(descriptor: handle)
+    }
+    #endif
+
     /// Validate that channel options are applied asynchronously.
     public func testAsyncSetOption() throws {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
@@ -377,17 +402,15 @@ final class SocketChannelTest: XCTestCase {
     }
 
     public func testWithConfiguredStreamSocket() throws {
-        #if os(Windows)
-        throw XCTSkip("Configured stream socket helpers are unsupported on Windows")
-        #else
         let didAccept = ConditionLock<Int>(value: 0)
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { XCTAssertNoThrow(try group.syncShutdownGracefully()) }
 
         let serverSock = try Socket(protocolFamily: .inet, type: .stream)
         try serverSock.bind(to: SocketAddress(ipAddress: "127.0.0.1", port: 0))
-        let serverChannelFuture = try serverSock.withUnsafeHandle {
-            ServerBootstrap(group: group)
+        let serverChannelFuture = try serverSock.withUnsafeHandle { handle in
+            let duplicated = try self.duplicateSocketHandle(handle)
+            return ServerBootstrap(group: group)
                 .childChannelInitializer { channel in
                     channel.eventLoop.makeCompletedFuture {
                         let acquiredLock = didAccept.lock(whenValue: 0, timeoutSeconds: 1)
@@ -395,7 +418,7 @@ final class SocketChannelTest: XCTestCase {
                         didAccept.unlock(withValue: 1)
                     }
                 }
-                .withBoundSocket(dup($0))
+                .withBoundSocket(duplicated)
         }
         try serverSock.close()
         let serverChannel = try serverChannelFuture.wait()
@@ -403,8 +426,9 @@ final class SocketChannelTest: XCTestCase {
         let clientSock = try Socket(protocolFamily: .inet, type: .stream)
         let connected = try clientSock.connect(to: serverChannel.localAddress!)
         XCTAssertEqual(connected, true)
-        let clientChannelFuture = try clientSock.withUnsafeHandle {
-            ClientBootstrap(group: group).withConnectedSocket(dup($0))
+        let clientChannelFuture = try clientSock.withUnsafeHandle { handle in
+            let duplicated = try self.duplicateSocketHandle(handle)
+            return ClientBootstrap(group: group).withConnectedSocket(duplicated)
         }
         try clientSock.close()
 
@@ -422,20 +446,17 @@ final class SocketChannelTest: XCTestCase {
 
         try serverChannel.close().wait()
         try clientChannel.close().wait()
-        #endif
     }
 
     public func testWithConfiguredDatagramSocket() throws {
-        #if os(Windows)
-        throw XCTSkip("Configured datagram socket helpers are unsupported on Windows")
-        #else
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { XCTAssertNoThrow(try group.syncShutdownGracefully()) }
 
         let serverSock = try Socket(protocolFamily: .inet, type: .datagram)
         try serverSock.bind(to: SocketAddress(ipAddress: "127.0.0.1", port: 0))
-        let serverChannelFuture = try serverSock.withUnsafeHandle {
-            DatagramBootstrap(group: group).withBoundSocket(dup($0))
+        let serverChannelFuture = try serverSock.withUnsafeHandle { handle in
+            let duplicated = try self.duplicateSocketHandle(handle)
+            return DatagramBootstrap(group: group).withBoundSocket(duplicated)
         }
         try serverSock.close()
         let serverChannel = try serverChannelFuture.wait()
@@ -443,7 +464,6 @@ final class SocketChannelTest: XCTestCase {
         XCTAssertEqual(true, serverChannel.isActive)
 
         try serverChannel.close().wait()
-        #endif
     }
     public func testPendingConnectNotificationOrder() throws {
 
