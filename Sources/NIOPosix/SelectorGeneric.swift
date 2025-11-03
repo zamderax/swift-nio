@@ -219,6 +219,10 @@ internal class Selector<R: Registration> {
     var pollFDs = [WinSDK.pollfd]()
     @usableFromInline
     var pollFDIndices = [UInt64: Int]()
+    @usableFromInline
+    var wakeupReadFD: NIOBSDSocket.Handle = ~NIOBSDSocket.Handle(0)
+    @usableFromInline
+    var wakeupWriteFD: NIOBSDSocket.Handle = ~NIOBSDSocket.Handle(0)
     #else
     #error("Unsupported platform, no suitable selector backend (we need kqueue or epoll support)")
     #endif
