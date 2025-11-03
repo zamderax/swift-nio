@@ -16,22 +16,25 @@
 
 [CmdletBinding()]
 param(
-    [int]$TimeoutSeconds = 300,
-    [string]$Filter,
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$AdditionalArguments
+[int]$TimeoutSeconds = 300,
+[string]$Filter,
+[Parameter(ValueFromRemainingArguments = $true)]
+[string[]]$AdditionalArguments
 )
 
-$swiftArguments = @('test')
+# Always make sure tests are built first (no timeout).
+swift build --build-tests
+
+# Construct the test invocation; we always skip the build because the
+# compilation was done above.
+$swiftTestArguments = @('test', '--skip-build')
 
 if ($Filter) {
-    $swiftArguments += @('--filter', $Filter)
+    $swiftTestArguments += @('--filter', $Filter)
 }
 
-if ($AdditionalArguments) {
-    $swiftArguments += $AdditionalArguments
-}
+$swiftTestArguments += $AdditionalArguments
 
 $invokeScript = Join-Path -Path $PSScriptRoot -ChildPath 'Invoke-SwiftBuildWithTimeout.ps1'
 
-& $invokeScript -TimeoutSeconds $TimeoutSeconds @swiftArguments
+& $invokeScript -TimeoutSeconds $TimeoutSeconds @swiftTestArguments
