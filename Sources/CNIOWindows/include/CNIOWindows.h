@@ -92,12 +92,6 @@ NIO(sendto)(SOCKET s, const void *buf, int len, int flags, const SOCKADDR *to,
   return sendto(s, buf, len, flags, to, tolen);
 }
 
-int NIO(sendmmsg)(SOCKET s, NIO(mmsghdr) *msgvec, unsigned int vlen, int flags);
-
-int NIO(recvmmsg)(SOCKET s, NIO(mmsghdr) *msgvec, unsigned int vlen, int flags,
-                  struct timespec *timeout);
-
-
 const void *NIO(CMSG_DATA)(const WSACMSGHDR *);
 void *NIO(CMSG_DATA_MUTABLE)(LPWSACMSGHDR);
 

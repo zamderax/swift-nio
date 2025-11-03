@@ -39,5 +39,6 @@
 - [x] Populate broadcast/multicast metadata when building `NIONetworkDevice` on Windows (`Sources/NIOCore/Interfaces.swift:357`) to match POSIX behaviour.
 - [x] Revisit Windows skips for `ChannelOptions.socket` helpers in embedded tests (`Tests/NIOEmbeddedTests/AsyncTestingChannelTests.swift:691`, `EmbeddedChannelTest.swift:702`) by exposing the necessary socket constants.
 - [x] Re-enable the deprecated interface-based multicast tests on Windows by rewriting them to use the new `System.enumerateDevices()` helpers instead of `XCTSkip` (`Tests/NIOPosixTests/MulticastTest.swift:56`, `:283`, `:358`, `:437`, `:502`).
-- [ ] Provide Windows-friendly implementations of the “configured stream/datagram socket helper” tests so the remaining skips in `Tests/NIOPosixTests/SocketChannelTest.swift:381` and `:430` can run.
+- [ ] Provide Windows-friendly implementations of the "configured stream/datagram socket helper" tests so the remaining skips in `Tests/NIOPosixTests/SocketChannelTest.swift:381` and `:430` can run.
+- [x] Implement WinSock-backed multi-message datagram support (`sendmmsg`/`recvmmsg`) on Windows (`Sources/NIOPosix/BSDSocketAPIWindows.swift:462`).
 - [x] Add Windows coverage for the Unix-domain-specific paths in `Tests/NIOPosixTests/PendingDatagramWritesManagerTests.swift` by supplying IPv4/IPv6 datagram scenarios instead of trapping with `fatalError`.

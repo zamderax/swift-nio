@@ -32,6 +32,7 @@ import let WinSDK.INVALID_SOCKET
 import let WinSDK.IPPROTO_IP
 import let WinSDK.IPPROTO_IPV6
 import let WinSDK.IPPROTO_TCP
+import let WinSDK.POLLRDNORM
 import let WinSDK.IPPROTO_UDP
 
 import let WinSDK.IP_ADD_MEMBERSHIP
@@ -67,8 +68,10 @@ import let WinSDK.SO_REUSE_UNICASTPORT
 import let WinSDK.SOCKET_ERROR
 import let WinSDK.UDP_RECV_MAX_COALESCED_SIZE
 import let WinSDK.UDP_SEND_MSG_SIZE
+import let WinSDK.WSAEINTR
 import let WinSDK.WSAENOPROTOOPT
 import let WinSDK.WSAEOPNOTSUPP
+import let WinSDK.WSAEWOULDBLOCK
 
 import let WinSDK.SOL_SOCKET
 
@@ -96,6 +99,7 @@ import func WinSDK.WriteFile
 import func WinSDK.WSAGetLastError
 import func WinSDK.WSAIoctl
 import func WinSDK.WSASend
+import func WinSDK.WSAPoll
 
 import struct WinSDK.socklen_t
 import struct WinSDK.u_long
@@ -112,6 +116,7 @@ import struct WinSDK.SOCKADDR_IN6
 import struct WinSDK.SOCKADDR_UN
 import struct WinSDK.SOCKADDR_STORAGE
 import struct WinSDK.WSACMSGHDR
+import struct WinSDK.WSAPOLLFD
 import struct WinSDK.WSAMSG
 
 import typealias WinSDK.LPFN_WSARECVMSG
@@ -463,7 +468,77 @@ extension NIOBSDSocket {
     )
         throws -> IOResult<Int>
     {
-        .processed(Int(CNIOWindows_recvmmsg(socket, msgvec, vlen, flags, timeout)))
+        let messageCount = Int(vlen)
+        if messageCount == 0 {
+            return .processed(0)
+        }
+
+        if let timeout {
+            let ts = timeout.pointee
+            let millisecondsFromSeconds = Int64(ts.tv_sec) * 1000
+            let millisecondsFromNanoseconds = Int64(ts.tv_nsec + 999_999) / 1_000_000
+            let totalMilliseconds = max(Int64(0), millisecondsFromSeconds &+ millisecondsFromNanoseconds)
+            let clampedMilliseconds: Int32
+            if totalMilliseconds > Int64(Int32.max) {
+                clampedMilliseconds = Int32.max
+            } else {
+                clampedMilliseconds = Int32(totalMilliseconds)
+            }
+
+            var pollFD = WSAPOLLFD(
+                fd: socket,
+                events: CShort(WinSDK.POLLRDNORM),
+                revents: 0
+            )
+
+            let pollResult = withUnsafeMutablePointer(to: &pollFD) { pointer -> Int32 in
+                pointer.withMemoryRebound(to: WSAPOLLFD.self, capacity: 1) { reboundedPointer in
+                    WinSDK.WSAPoll(reboundedPointer, 1, clampedMilliseconds)
+                }
+            }
+
+            if pollResult == 0 {
+                return .wouldBlock(0)
+            } else if pollResult == SOCKET_ERROR {
+                throw IOError(winsock: WSAGetLastError(), reason: "WSAPoll")
+            }
+        }
+
+        var index = 0
+        while index < messageCount {
+            msgvec[index].msg_hdr.dwFlags = DWORD(flags)
+
+            do {
+                let result = try self.recvmsg(
+                    socket: socket,
+                    msgHdr: &msgvec[index].msg_hdr,
+                    flags: flags
+                )
+                switch result {
+                case .processed(let bytes):
+                    msgvec[index].msg_len = CUnsignedInt(bytes)
+                    index += 1
+                case .wouldBlock:
+                    return index == 0 ? .wouldBlock(0) : .processed(index)
+                }
+            } catch let error as IOError {
+                if let winsock = error.winsockCode {
+                    switch winsock {
+                    case WSAEWOULDBLOCK:
+                        return index == 0 ? .wouldBlock(0) : .processed(index)
+                    case WSAEINTR:
+                        continue
+                    default:
+                        if index > 0 {
+                            return .processed(index)
+                        }
+                    }
+                }
+                throw error
+            }
+        }
+
+        return .processed(messageCount)
     }
 
     @inline(never)
@@ -475,7 +550,49 @@ extension NIOBSDSocket {
     )
         throws -> IOResult<Int>
     {
-        .processed(Int(CNIOWindows_sendmmsg(socket, msgvec, vlen, flags)))
+        let messageCount = Int(vlen)
+        if messageCount == 0 {
+            return .processed(0)
+        }
+
+        var index = 0
+        while index < messageCount {
+            msgvec[index].msg_hdr.dwFlags = DWORD(flags)
+
+            do {
+                let result = try withUnsafePointer(to: &msgvec[index].msg_hdr) { pointer in
+                    try self.sendmsg(
+                        socket: socket,
+                        msgHdr: pointer,
+                        flags: flags
+                    )
+                }
+
+                switch result {
+                case .processed(let bytes):
+                    msgvec[index].msg_len = CUnsignedInt(bytes)
+                    index += 1
+                case .wouldBlock:
+                    return index == 0 ? .wouldBlock(0) : .processed(index)
+                }
+            } catch let error as IOError {
+                if let winsock = error.winsockCode {
+                    switch winsock {
+                    case WSAEWOULDBLOCK:
+                        return index == 0 ? .wouldBlock(0) : .processed(index)
+                    case WSAEINTR:
+                        continue
+                    default:
+                        if index > 0 {
+                            return .processed(index)
+                        }
+                    }
+                }
+                throw error
+            }
+        }
+
+        return .processed(messageCount)
     }
 
     // NOTE: this should return a `ssize_t`, however, that is not a standard
