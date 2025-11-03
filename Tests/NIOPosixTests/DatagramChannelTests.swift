@@ -15,6 +15,10 @@
 import NIOConcurrencyHelpers
 import NIOCore
 import XCTest
+#if os(Windows)
+import Dispatch
+import Foundation
+#endif
 
 @testable import NIOPosix
 
@@ -28,15 +32,24 @@ import CNIOLinux
 #endif
 
 extension Channel {
-    func waitForDatagrams(count: Int) throws -> [AddressedEnvelope<ByteBuffer>] {
-        try self.pipeline.context(name: "ByteReadRecorder").flatMap { context in
+    func waitForDatagrams(
+        count: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> [AddressedEnvelope<ByteBuffer>] {
+        let future = self.pipeline.context(name: "ByteReadRecorder").flatMap { context in
             if let future = (context.handler as? DatagramReadRecorder<ByteBuffer>)?.notifyForDatagrams(count) {
                 return future
             }
 
-            XCTFail("Could not wait for reads")
+            XCTFail("Could not wait for reads", file: file, line: line)
             return self.eventLoop.makeSucceededFuture([] as [AddressedEnvelope<ByteBuffer>])
-        }.wait()
+        }
+#if os(Windows)
+        return try _waitForFuture(future, timeoutSeconds: 5, file: file, line: line)
+#else
+        return try future.wait()
+#endif
     }
 
     func waitForErrors(count: Int) throws -> [any Error] {
@@ -147,6 +160,59 @@ final class DatagramReadRecorder<DataType: Sendable>: ChannelInboundHandler {
     }
 }
 
+#if os(Windows)
+private func _waitForFuture<Value>(
+    _ future: EventLoopFuture<Value>,
+    timeoutSeconds: Double,
+    file: StaticString,
+    line: UInt
+) throws -> Value {
+    let semaphore = DispatchSemaphore(value: 0)
+    let box = _FutureResultBox<Value>()
+
+    future.whenComplete { resolved in
+        box.result = resolved
+        semaphore.signal()
+    }
+
+    switch semaphore.wait(timeout: .now() + .milliseconds(Int(timeoutSeconds * 1000))) {
+    case .success:
+        guard let resolved = box.result else {
+            XCTFail("Future completed without result", file: file, line: line)
+            throw XCTestError(.failureWhileWaiting)
+        }
+        return try resolved.get()
+    case .timedOut:
+        XCTFail("Timed out waiting for future to complete", file: file, line: line)
+        throw XCTestError(.timeoutWhileWaiting)
+    @unknown default:
+        XCTFail("Unexpected semaphore wait result", file: file, line: line)
+        throw XCTestError(.failureWhileWaiting)
+    }
+}
+
+private final class _FutureResultBox<Value>: @unchecked Sendable {
+    var result: Result<Value, Error>?
+}
+
+private func datagramDebugLog(_ message: String) {
+    let path = "C:\\github\\swift-nio\\datagram_debug.log"
+    let formatter = ISO8601DateFormatter()
+    let timestamp = formatter.string(from: Date())
+    let fullMessage = "[\(timestamp)] \(message)\n"
+    let data = Data(fullMessage.utf8)
+    if FileManager.default.fileExists(atPath: path) {
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+        }
+    } else {
+        _ = FileManager.default.createFile(atPath: path, contents: data, attributes: nil)
+    }
+}
+#endif
+
 class DatagramChannelTests: XCTestCase {
     private var group: MultiThreadedEventLoopGroup! = nil
     private var firstChannel: Channel! = nil
@@ -184,10 +250,22 @@ class DatagramChannelTests: XCTestCase {
         self.firstChannel = try! buildChannel(group: group)
         self.secondChannel = try! buildChannel(group: group)
         self.thirdChannel = try! buildChannel(group: group)
+#if os(Windows)
+        datagramDebugLog("setUp \(self.name)")
+        datagramDebugLog("firstChannel active: \(self.firstChannel.isActive)")
+        datagramDebugLog("secondChannel active: \(self.secondChannel.isActive)")
+        datagramDebugLog("thirdChannel active: \(self.thirdChannel.isActive)")
+#endif
     }
 
     override func tearDown() {
+#if os(Windows)
+        datagramDebugLog("tearDown \(self.name) - shutting down group")
+#endif
         XCTAssertNoThrow(try self.group.syncShutdownGracefully())
+#if os(Windows)
+        datagramDebugLog("tearDown \(self.name) - done")
+#endif
         super.tearDown()
     }
 
@@ -195,7 +273,12 @@ class DatagramChannelTests: XCTestCase {
         var buffer = self.firstChannel.allocator.buffer(capacity: 256)
         buffer.writeStaticString("hello, world!")
         let writeData = AddressedEnvelope(remoteAddress: self.secondChannel.localAddress!, data: buffer)
+#if os(Windows)
+        let writeFuture = self.firstChannel.writeAndFlush(writeData)
+        XCTAssertNoThrow(try _waitForFuture(writeFuture, timeoutSeconds: 5, file: #filePath, line: #line))
+#else
         XCTAssertNoThrow(try self.firstChannel.writeAndFlush(writeData).wait())
+#endif
 
         let reads = try self.secondChannel.waitForDatagrams(count: 1)
         XCTAssertEqual(reads.count, 1)

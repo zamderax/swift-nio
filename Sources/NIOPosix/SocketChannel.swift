@@ -15,6 +15,7 @@ import CNIOLinux
 import NIOCore
 
 #if os(Windows)
+import Foundation
 import let WinSDK.ECONNABORTED
 import let WinSDK.ECONNREFUSED
 import let WinSDK.EMFILE
@@ -476,6 +477,19 @@ final class ServerSocketChannel: BaseSocketChannel<ServerSocket>, @unchecked Sen
 ///
 /// Currently, it does not support connected mode which is well worth adding.
 final class DatagramChannel: BaseSocketChannel<Socket>, @unchecked Sendable {
+#if os(Windows)
+    private static func windowsLog(_ message: String, metadata: [String: String] = [:]) {
+        var line = "[DatagramChannel] \(message)"
+        if !metadata.isEmpty {
+            let metaDescription = metadata.map { "\($0)=\($1)" }.joined(separator: " ")
+            line.append(" -- \(metaDescription)")
+        }
+        line.append("\n")
+        if let data = line.data(using: .utf8) {
+            FileHandle.standardError.write(data)
+        }
+    }
+#endif
     private var reportExplicitCongestionNotifications = false
     private var receivePacketInfo = false
 
@@ -774,7 +788,13 @@ final class DatagramChannel: BaseSocketChannel<Socket>, @unchecked Sendable {
 
             let (buffer, result) = try self.recvBufferPool.buffer(allocator: self.allocator) { buffer in
                 try buffer.withMutableWritePointer { pointer in
-                    try self.socket.recvmsg(
+#if os(Windows)
+                    Self.windowsLog("recvmsg attempt", metadata: [
+                        "localAddress": "\(self.localAddress?.description ?? "nil")",
+                        "pendingRead": "\(self.readPending)"
+                    ])
+#endif
+                    return try self.socket.recvmsg(
                         pointer: pointer,
                         storage: &rawAddress,
                         storageLen: &rawAddressLength,
@@ -788,6 +808,13 @@ final class DatagramChannel: BaseSocketChannel<Socket>, @unchecked Sendable {
                 assert(self.isOpen)
                 let remoteAddress: SocketAddress = try rawAddress.convert()
 
+#if os(Windows)
+                Self.windowsLog("recvmsg processed", metadata: [
+                    "bytes": "\(bytesRead)",
+                    "remoteAddress": "\(remoteAddress)",
+                    "metadataPresent": "\(controlBytes.receivedControlMessages != nil)"
+                ])
+#endif
                 self.recvBufferPool.record(actualReadBytes: bytesRead)
                 readPending = false
 
@@ -810,6 +837,12 @@ final class DatagramChannel: BaseSocketChannel<Socket>, @unchecked Sendable {
                 readResult = .some
             case .wouldBlock(let bytesRead):
                 assert(bytesRead == 0)
+#if os(Windows)
+                Self.windowsLog("recvmsg wouldBlock", metadata: [
+                    "readResult": "\(readResult)",
+                    "pendingBytes": "\(self.pendingWrites.bufferedBytes)"
+                ])
+#endif
                 return readResult
             }
         }
@@ -978,6 +1011,13 @@ final class DatagramChannel: BaseSocketChannel<Socket>, @unchecked Sendable {
     }
 
     override func writeToSocket() throws -> OverallWriteResult {
+#if os(Windows)
+        Self.windowsLog("writeToSocket start", metadata: [
+            "pendingBytes": "\(self.pendingWrites.bufferedBytes)",
+            "isFlushPending": "\(self.pendingWrites.isFlushPending)",
+            "localAddress": "\(self.localAddress?.description ?? "nil")"
+        ])
+#endif
         let result = try self.pendingWrites.triggerAppropriateWriteOperations(
             scalarWriteOperation: { (ptr, destinationPtr, destinationSize, metadata) in
                 let msgBuffer = self.selectableEventLoop.msgBufferPool.get()
@@ -1000,6 +1040,13 @@ final class DatagramChannel: BaseSocketChannel<Socket>, @unchecked Sendable {
                 try self.socket.sendmmsg(msgs: msgs)
             }
         )
+#if os(Windows)
+        Self.windowsLog("writeToSocket completed", metadata: [
+            "writeResult": "\(result.writeResult)",
+            "writabilityChange": "\(result.writabilityChange)",
+            "remainingBytes": "\(self.pendingWrites.bufferedBytes)"
+        ])
+#endif
         return result
     }
 
