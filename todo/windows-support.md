@@ -48,4 +48,8 @@
 - [x] Avoid fatalError when using VsockAddress on Windows by providing a real implementation or mapping (Sources/NIOPosix/VsockAddress.swift:189).
 - [x] Provide a Windows implementation of assertNoSelectorChanges to remove the test warning (Tests/NIOPosixTests/StreamChannelsTest.swift:1253).
 
+## Future Work
+- [ ] Replace the `NIOFSWindows` stub with a full Windows implementation so high-level filesystem calls stop throwing `FileSystemError.unsupported` (`Sources/NIOFSWindows/Stub.swift:1`).
+- [ ] Bridge `NIOFS.FileSystem` APIs to the concrete `_NIOFileSystemWindows.FileSystem` operations instead of returning unsupported errors (`Sources/NIOFS/FileSystem.swift:52`, `Sources/_NIOFileSystemWindows/FileSystem.swift:148`).
+
 
