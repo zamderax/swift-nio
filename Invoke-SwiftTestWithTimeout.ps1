@@ -33,7 +33,9 @@ if ($Filter) {
     $swiftTestArguments += @('--filter', $Filter)
 }
 
-$swiftTestArguments += $AdditionalArguments
+if ($AdditionalArguments) {
+    $swiftTestArguments += $AdditionalArguments
+}
 
 $invokeScript = Join-Path -Path $PSScriptRoot -ChildPath 'Invoke-SwiftBuildWithTimeout.ps1'
 
