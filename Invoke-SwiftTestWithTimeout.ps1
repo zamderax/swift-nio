@@ -23,6 +23,7 @@ param(
 )
 
 # Always make sure tests are built first (no timeout).
+Write-Host "[Invoke-SwiftTestWithTimeout] Building tests (no timeout): swift build --build-tests"
 swift build --build-tests
 
 # Construct the test invocation; we always skip the build because the
@@ -37,6 +38,15 @@ if ($AdditionalArguments) {
     $swiftTestArguments += $AdditionalArguments
 }
 
+$commandPreview = "swift " + ($swiftTestArguments -join ' ')
+Write-Host "[Invoke-SwiftTestWithTimeout] Running tests with timeout $TimeoutSeconds s: $commandPreview"
+
 $invokeScript = Join-Path -Path $PSScriptRoot -ChildPath 'Invoke-SwiftBuildWithTimeout.ps1'
 
-& $invokeScript -TimeoutSeconds $TimeoutSeconds @swiftTestArguments
+try {
+    & $invokeScript -TimeoutSeconds $TimeoutSeconds @swiftTestArguments
+}
+catch {
+    Write-Error "[Invoke-SwiftTestWithTimeout] Test invocation failed for: $commandPreview"
+    throw
+}
