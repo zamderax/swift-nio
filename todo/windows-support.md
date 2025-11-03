@@ -20,10 +20,12 @@
 ## Datagram & Multicast Support
 - [x] Implement pending datagram write coalescing (`Tests/NIOPosixTests/PendingDatagramWritesManagerTests.swift:8`).
 - [x] Provide multicast membership/option support so `Tests/NIOPosixTests/MulticastTest.swift:8` can run.
+- [ ] Investigate `Tests/NIOPosixTests/DatagramChannelTests.swift` taking >10s on Windows and address any performance or blocking issues.
 
 ## Pipe & Descriptor Utilities
 - [x] Extend `NIOPipeBootstrap` to accept single descriptor socketpairs on Windows (`Tests/NIOPosixTests/PipeChannelTest.swift:275`).
 - [x] Add Windows-friendly UNIX-domain path helpers and selector coverage to replace skips in `Tests/NIOPosixTests/TestUtils.swift:196` and `SelectorTest.swift:8`.
+- [ ] Investigate why `Tests/NIOPosixTests/PipeChannelTest.swift` exceeds a 10s run window on Windows and address any hangs or blocking waits.
 
 ## Higher-Level Networking Features
 - [x] Implement the remaining Happy Eyeballs networking pieces required by `Tests/NIOPosixTests/HappyEyeballsTest.swift:6`.
