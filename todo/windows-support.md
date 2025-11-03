@@ -43,3 +43,8 @@
 - [x] Implement a Windows-backed `System.sendfile` (via `TransmitFile`) so zero-copy file sends work instead of trapping on `fatalError("unsupported OS")` (`Sources/NIOPosix/System.swift:799`).
 - [x] Implement WinSock-backed multi-message datagram support (`sendmmsg`/`recvmmsg`) on Windows (`Sources/NIOPosix/BSDSocketAPIWindows.swift:462`).
 - [x] Add Windows coverage for the Unix-domain-specific paths in `Tests/NIOPosixTests/PendingDatagramWritesManagerTests.swift` by supplying IPv4/IPv6 datagram scenarios instead of trapping with `fatalError`.
+- [ ] Implement Windows support for ChannelOptions.localVsockContextID so Hyper-V sockets expose context IDs (Sources/NIOPosix/SocketChannel.swift:124, :293).
+- [ ] Avoid fatalError when using VsockAddress on Windows by providing a real implementation or mapping (Sources/NIOPosix/VsockAddress.swift:189).
+- [ ] Provide a Windows implementation of assertNoSelectorChanges to remove the test warning (Tests/NIOPosixTests/StreamChannelsTest.swift:1253).
+
+
