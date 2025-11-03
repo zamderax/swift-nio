@@ -22,6 +22,8 @@ import XCTest
 
 #if os(Windows)
 import WinSDK
+import let WinSDK.WSA_FLAG_NO_HANDLE_INHERIT
+import let WinSDK.WSA_FLAG_OVERLAPPED
 #endif
 
 extension Array {
@@ -48,7 +50,7 @@ final class SocketChannelTest: XCTestCase {
             Int32(protocolInfo.iProtocol),
             &protocolInfo,
             0,
-            0
+            DWORD(WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT)
         )
         guard duplicated != INVALID_SOCKET else {
             throw IOError(winsock: WSAGetLastError(), reason: "WSASocketW")
