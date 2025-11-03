@@ -15,6 +15,10 @@
 import Atomics
 import NIOCore
 
+#if os(Windows)
+import WinSDK
+#endif
+
 private protocol SilenceWarning {
     @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
     func enqueue(_ job: UnownedJob)
@@ -23,6 +27,7 @@ private protocol SilenceWarning {
 extension SelectableEventLoop: SilenceWarning {}
 
 private let _haveWeTakenOverTheConcurrencyPool = ManagedAtomic(false)
+private typealias ConcurrencyHookAtomicRepresentation = UnsafeAtomic<UnsafeRawPointer?>.Storage
 extension NIOSingletons {
     /// Install ``MultiThreadedEventLoopGroup/singleton`` as Swift Concurrency's global executor.
     ///
@@ -37,18 +42,8 @@ extension NIOSingletons {
     ///
     /// - warning: You may only call this method from the main thread.
     /// - warning: You may only call this method once.
-    /// - warning: This method is currently not supported on Windows and will return false.
     @discardableResult
     public static func unsafeTryInstallSingletonPosixEventLoopGroupAsConcurrencyGlobalExecutor() -> Bool {
-        #if os(Windows)
-        return false
-        #else
-        // Guard between the minimum and maximum supported version for the hook
-        #if compiler(<6.3)
-        guard #available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *) else {
-            return false
-        }
-
         typealias ConcurrencyEnqueueGlobalHook =
             @convention(thin) (
                 UnownedJob, @convention(thin) (UnownedJob) -> Void
@@ -64,6 +59,21 @@ extension NIOSingletons {
             fatalError("Must be called only once")
         }
 
+        let concurrencyEnqueueGlobalHookPtr: UnsafeMutableRawPointer
+
+        #if os(Windows)
+        guard let hookPtr = Self.lookupWindowsConcurrencyHookSymbol() else {
+            return false
+        }
+        concurrencyEnqueueGlobalHookPtr = hookPtr
+        #else
+        // Guard between the minimum and maximum supported version for the hook
+        #if compiler(<6.3)
+        guard #available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *) else {
+            return false
+        }
+        #endif
+
         #if canImport(Darwin)
         guard pthread_main_np() == 1 else {
             fatalError("Must be called from the main thread")
@@ -73,18 +83,22 @@ extension NIOSingletons {
         // Unsafe 1: We pretend that the hook's type is actually fully equivalent to `ConcurrencyEnqueueGlobalHook`
         //   @convention(thin) (UnownedJob, @convention(thin) (UnownedJob) -> Void) -> Void
         // which isn't formally guaranteed.
-        let concurrencyEnqueueGlobalHookPtr = dlsym(
+        let hookSymbol = dlsym(
             dlopen(nil, RTLD_NOW),
             "swift_task_enqueueGlobal_hook"
-        )?.assumingMemoryBound(to: UnsafeRawPointer?.AtomicRep.self)
-        guard let concurrencyEnqueueGlobalHookPtr = concurrencyEnqueueGlobalHookPtr else {
+        )
+        guard let hookPtr = hookSymbol else {
             return false
         }
+        concurrencyEnqueueGlobalHookPtr = hookPtr
+        #endif
 
         // We will use an atomic operation to swap the pointers aiming to protect against other code that attempts
         // to swap the pointer. This isn't guaranteed to work as we can't be sure that the other code will actually
         // use atomic compares and exchanges to. Nevertheless, we're doing our best.
-        let concurrencyEnqueueGlobalHookAtomic = UnsafeAtomic<UnsafeRawPointer?>(at: concurrencyEnqueueGlobalHookPtr)
+        let atomicPointer = concurrencyEnqueueGlobalHookPtr
+            .assumingMemoryBound(to: ConcurrencyHookAtomicRepresentation.self)
+        let concurrencyEnqueueGlobalHookAtomic = UnsafeAtomic<UnsafeRawPointer?>(at: atomicPointer)
         // note: We don't need to destroy this atomic as we're borrowing the storage from `dlsym`.
 
         return withUnsafeTemporaryAllocation(
@@ -112,9 +126,9 @@ extension NIOSingletons {
                 // that the others also use a `compareExchange`)...
                 guard
                     concurrencyEnqueueGlobalHookAtomic.compareExchange(
-                        expected: nil,
+                        expected: Optional<UnsafeRawPointer>.none,
                         desired: enqueueOnNIOPtr.pointee,
-                        ordering: .relaxed
+                        ordering: AtomicUpdateOrdering.relaxed
                     ).exchanged
                 else {
                     return false
@@ -124,10 +138,6 @@ extension NIOSingletons {
                 return true
             }
         }
-        #else
-        return false
-        #endif
-        #endif  // windows unimplemented
     }
 }
 
@@ -139,3 +149,41 @@ where
 {
     typealias AtomicRep = Wrapped.AtomicOptionalRepresentation
 }
+
+#if os(Windows)
+extension NIOSingletons {
+    /// Attempts to resolve the concurrency global hook symbol from a loaded module on Windows.
+    @usableFromInline
+    static func lookupWindowsConcurrencyHookSymbol() -> UnsafeMutableRawPointer? {
+        let symbolName = "swift_task_enqueueGlobal_hook"
+        return symbolName.withCString { symbolPointer -> UnsafeMutableRawPointer? in
+            func moduleHandle(for moduleName: String?) -> HMODULE? {
+                if let moduleName {
+                    return moduleName.withCString(encodedAs: UTF16.self) { wideName in
+                        GetModuleHandleW(wideName)
+                    }
+                } else {
+                    return GetModuleHandleW(nil)
+                }
+            }
+
+            let candidateModules: [String?] = [
+                nil,
+                "swiftCore.dll",
+                "swiftConcurrency.dll"
+            ]
+
+            for candidate in candidateModules {
+                guard let module = moduleHandle(for: candidate) else {
+                    continue
+                }
+                if let address = GetProcAddress(module, symbolPointer) {
+                    return unsafeBitCast(address, to: UnsafeMutableRawPointer?.self)
+                }
+            }
+
+            return nil
+        }
+    }
+}
+#endif

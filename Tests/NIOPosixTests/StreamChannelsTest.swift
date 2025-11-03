@@ -19,6 +19,10 @@ import NIOCore
 import NIOTestUtils
 import XCTest
 
+#if os(Windows)
+import WinSDK
+#endif
+
 @testable import NIOPosix
 
 class StreamChannelTest: XCTestCase {
@@ -1249,6 +1253,32 @@ private func assertNoSelectorChanges(
         throw UnexpectedSelectorChanges(description: "\(selector)")
     }
     #endif
+    #elseif os(Windows)
+    var pollFDs = selector.pollFDs
+    guard !pollFDs.isEmpty else {
+        return
+    }
+    let result: Int32 = pollFDs.withUnsafeMutableBufferPointer { buffer in
+        guard let baseAddress = buffer.baseAddress else {
+            return 0
+        }
+        return WinSDK.WSAPoll(baseAddress, ULONG(buffer.count), 0)
+    }
+    if result == SOCKET_ERROR {
+        let error = WSAGetLastError()
+        throw UnexpectedSelectorChanges(description: "WSAPoll failed: \(error)")
+    }
+    if result != 0 {
+        let triggered = pollFDs
+            .filter { $0.revents != 0 }
+            .map { poll -> String in
+                let fdValue = String(describing: poll.fd)
+                let reventsValue = UInt16(bitPattern: poll.revents)
+                return "fd:\(fdValue) revents:0x\(String(reventsValue, radix: 16))"
+            }
+            .joined(separator: ", ")
+        throw UnexpectedSelectorChanges(description: triggered)
+    }
     #else
     #warning("assertNoSelectorChanges unsupported on this OS.")
     #endif

@@ -23,8 +23,89 @@ import CNIODarwin
 @preconcurrency import Musl
 #endif
 import CNIOLinux
+#elseif os(Windows)
+import WinSDK
 #endif
 let vsockUnimplemented = "VSOCK support is not implemented for this platform"
+
+#if os(Windows)
+@usableFromInline
+let swiftNIOVsockContextNamespaceData2: UInt16 = 0x534E // "SN"
+@usableFromInline
+let swiftNIOVsockContextNamespaceData3: UInt16 = 0x5601
+@usableFromInline
+let swiftNIOVsockContextNamespaceData4: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) =
+    (0x56, 0x53, 0x43, 0x54, 0x49, 0x44, 0x21, 0x31) // "VSCTID!1"
+
+@usableFromInline
+let swiftNIOVsockServiceNamespaceData2: UInt16 = 0x534E // "SN"
+@usableFromInline
+let swiftNIOVsockServiceNamespaceData3: UInt16 = 0x5602
+@usableFromInline
+let swiftNIOVsockServiceNamespaceData4: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) =
+    (0x56, 0x53, 0x50, 0x4F, 0x52, 0x54, 0x21, 0x31) // "VSPORT!1"
+
+@usableFromInline
+func swiftNIOVsockGuidEquals(_ lhs: GUID, _ rhs: GUID) -> Bool {
+    withUnsafeBytes(of: lhs) { lhsBytes in
+        withUnsafeBytes(of: rhs) { rhsBytes in
+            lhsBytes.elementsEqual(rhsBytes)
+        }
+    }
+}
+
+@usableFromInline
+func swiftNIOVsockMakeNamespaceGUID(
+    value: UInt32,
+    data2: UInt16,
+    data3: UInt16,
+    data4: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+) -> GUID {
+    GUID(
+        Data1: value,
+        Data2: data2,
+        Data3: data3,
+        Data4: data4
+    )
+}
+
+@usableFromInline
+func swiftNIOVsockDecodeNamespaceGUID(
+    _ guid: GUID,
+    expectedData2: UInt16,
+    expectedData3: UInt16,
+    expectedData4: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8)
+) -> UInt32? {
+    guard guid.Data2 == expectedData2,
+          guid.Data3 == expectedData3 else {
+        return nil
+    }
+    var expected = expectedData4
+    let matches = withUnsafeBytes(of: guid.Data4) { guidBytes in
+        withUnsafeBytes(of: &expected) { expectedBytes in
+            guidBytes.elementsEqual(expectedBytes)
+        }
+    }
+    guard matches else {
+        return nil
+    }
+    return guid.Data1
+}
+
+@usableFromInline
+func swiftNIOVsockHashGUID(_ guid: GUID) -> UInt32 {
+    withUnsafeBytes(of: guid) { bytes -> UInt32 in
+        var hash: UInt32 = 2_166_136_261 // FNV-1a offset basis
+        for byte in bytes {
+            hash = (hash ^ UInt32(byte)) &* 16_777_619
+        }
+        return hash
+    }
+}
+
+@usableFromInline
+let swiftNIOVsockGuidNull = GUID()
+#endif
 
 // MARK: - Public API that's available on all platforms.
 
@@ -183,7 +264,9 @@ extension ChannelOptions.Types {
 extension NIOBSDSocket.AddressFamily {
     /// Address for vsock.
     public static var vsock: NIOBSDSocket.AddressFamily {
-        #if canImport(Darwin) || os(Linux) || os(Android)
+        #if os(Windows)
+        NIOBSDSocket.AddressFamily.hyperV
+        #elseif canImport(Darwin) || os(Linux) || os(Android)
         NIOBSDSocket.AddressFamily(rawValue: AF_VSOCK)
         #else
         fatalError(vsockUnimplemented)
@@ -194,7 +277,9 @@ extension NIOBSDSocket.AddressFamily {
 extension NIOBSDSocket.ProtocolFamily {
     /// Address for vsock.
     public static var vsock: NIOBSDSocket.ProtocolFamily {
-        #if canImport(Darwin) || os(Linux) || os(Android)
+        #if os(Windows)
+        NIOBSDSocket.ProtocolFamily.hyperV
+        #elseif canImport(Darwin) || os(Linux) || os(Android)
         NIOBSDSocket.ProtocolFamily(rawValue: PF_VSOCK)
         #else
         fatalError(vsockUnimplemented)
@@ -204,7 +289,9 @@ extension NIOBSDSocket.ProtocolFamily {
 
 extension VsockAddress {
     public func withSockAddr<T>(_ body: (UnsafePointer<sockaddr>, Int) throws -> T) rethrows -> T {
-        #if canImport(Darwin) || os(Linux) || os(Android)
+        #if os(Windows)
+        return try self.makeHyperVSocketAddress().withSockAddr(body)
+        #elseif canImport(Darwin) || os(Linux) || os(Android)
         return try self.address.withSockAddr({ try body($0, $1) })
         #else
         fatalError(vsockUnimplemented)
@@ -291,4 +378,128 @@ extension BaseSocket {
     }
 }
 
-#endif  // canImport(Darwin) || os(Linux) || os(Android)
+#elseif os(Windows)
+
+extension VsockAddress.ContextID {
+    @usableFromInline
+    func hyperVVmId() -> GUID {
+        switch self.rawValue {
+        case Self.any.rawValue:
+            return HyperVSocketAddress.VmId.wildcard
+        case Self.local.rawValue:
+            return HyperVSocketAddress.VmId.loopback
+        case Self.host.rawValue:
+            return HyperVSocketAddress.VmId.parent
+        default:
+            return swiftNIOVsockMakeNamespaceGUID(
+                value: self.rawValue,
+                data2: swiftNIOVsockContextNamespaceData2,
+                data3: swiftNIOVsockContextNamespaceData3,
+                data4: swiftNIOVsockContextNamespaceData4
+            )
+        }
+    }
+
+    @usableFromInline
+    static func fromHyperVVmId(_ vmId: GUID) -> Self {
+        if swiftNIOVsockGuidEquals(vmId, HyperVSocketAddress.VmId.wildcard) {
+            return .any
+        }
+        if swiftNIOVsockGuidEquals(vmId, HyperVSocketAddress.VmId.loopback) {
+            return .local
+        }
+        if swiftNIOVsockGuidEquals(vmId, HyperVSocketAddress.VmId.parent) {
+            return .host
+        }
+        if let decoded = swiftNIOVsockDecodeNamespaceGUID(
+            vmId,
+            expectedData2: swiftNIOVsockContextNamespaceData2,
+            expectedData3: swiftNIOVsockContextNamespaceData3,
+            expectedData4: swiftNIOVsockContextNamespaceData4
+        ) {
+            return Self(rawValue: decoded)
+        }
+        var hash = swiftNIOVsockHashGUID(vmId)
+        if hash == Self.any.rawValue || hash == Self.local.rawValue || hash == Self.host.rawValue {
+            hash &+= 1
+        }
+        return Self(rawValue: hash)
+    }
+
+    static func getLocalContextID(_ socketFD: NIOBSDSocket.Handle) throws -> Self {
+        var raw = HyperVRawSocketAddress(
+            Family: hyperVAddressFamilyValue,
+            VmId: GUID(),
+            ServiceId: GUID()
+        )
+        var length = socklen_t(MemoryLayout<HyperVRawSocketAddress>.size)
+        try withUnsafeMutablePointer(to: &raw) { pointer in
+            try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                try NIOBSDSocket.getsockname(socket: socketFD, address: sockaddrPointer, address_len: &length)
+            }
+        }
+        guard length >= MemoryLayout<HyperVRawSocketAddress>.size else {
+            throw IOError(windows: DWORD(WSAEINVAL), reason: "getsockname")
+        }
+        return Self.fromHyperVVmId(raw.VmId)
+    }
+}
+
+extension VsockAddress.Port {
+    @usableFromInline
+    func hyperVServiceId() -> GUID {
+        if self == .any {
+            return swiftNIOVsockGuidNull
+        }
+        return swiftNIOVsockMakeNamespaceGUID(
+            value: self.rawValue,
+            data2: swiftNIOVsockServiceNamespaceData2,
+            data3: swiftNIOVsockServiceNamespaceData3,
+            data4: swiftNIOVsockServiceNamespaceData4
+        )
+    }
+
+    @usableFromInline
+    static func fromHyperVServiceId(_ serviceId: GUID) -> Self {
+        if swiftNIOVsockGuidEquals(serviceId, swiftNIOVsockGuidNull) {
+            return .any
+        }
+        if let decoded = swiftNIOVsockDecodeNamespaceGUID(
+            serviceId,
+            expectedData2: swiftNIOVsockServiceNamespaceData2,
+            expectedData3: swiftNIOVsockServiceNamespaceData3,
+            expectedData4: swiftNIOVsockServiceNamespaceData4
+        ) {
+            return Self(rawValue: decoded)
+        }
+        var hash = swiftNIOVsockHashGUID(serviceId)
+        if hash == Self.any.rawValue {
+            hash &+= 1
+        }
+        return Self(rawValue: hash)
+    }
+}
+
+extension VsockAddress {
+    @usableFromInline
+    func makeHyperVSocketAddress() -> HyperVSocketAddress {
+        HyperVSocketAddress(
+            vmId: self.cid.hyperVVmId(),
+            serviceId: self.port.hyperVServiceId()
+        )
+    }
+}
+
+extension BaseSocket {
+    func bind(to address: VsockAddress) throws {
+        try self.bind(to: address.makeHyperVSocketAddress())
+    }
+
+    func getLocalVsockContextID() throws -> VsockAddress.ContextID {
+        try self.withUnsafeHandle { fd in
+            try VsockAddress.ContextID.getLocalContextID(fd)
+        }
+    }
+}
+
+#endif
