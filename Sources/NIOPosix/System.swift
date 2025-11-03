@@ -796,10 +796,24 @@ internal enum Posix: Sendable {
         }.result
     }
 
-    #if !os(Windows)
-    // It's not really posix but exists on Linux and MacOS / BSD so just put it here for now to keep it simple
     @inline(never)
     public static func sendfile(descriptor: CInt, fd: CInt, offset: off_t, count: size_t) throws -> IOResult<Int> {
+        #if os(Windows)
+        if count == 0 {
+            return .processed(0)
+        }
+
+        let maxChunk = size_t(DWORD.max)
+        let bytesToWrite = min(count, maxChunk)
+        let socket: NIOBSDSocket.Handle = numericCast(descriptor)
+        return try NIOBSDSocket.sendfile(
+            socket: socket,
+            fd: fd,
+            offset: offset,
+            len: off_t(bytesToWrite)
+        )
+        #else
+        // It's not really posix but exists on Linux and MacOS / BSD so just put it here for now to keep it simple
         var written: off_t = 0
         do {
             _ = try syscall(blocking: false) { () -> ssize_t in
@@ -834,8 +848,10 @@ internal enum Posix: Sendable {
             }
             throw err
         }
+        #endif
     }
 
+    #if !os(Windows)
     @inline(never)
     public static func sendmmsg(
         sockfd: CInt,
