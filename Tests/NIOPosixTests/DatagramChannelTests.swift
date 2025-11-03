@@ -17,7 +17,6 @@ import NIOCore
 import XCTest
 #if os(Windows)
 import Dispatch
-import Foundation
 #endif
 
 @testable import NIOPosix
@@ -194,23 +193,6 @@ private func _waitForFuture<Value>(
 private final class _FutureResultBox<Value>: @unchecked Sendable {
     var result: Result<Value, Error>?
 }
-
-private func datagramDebugLog(_ message: String) {
-    let path = "C:\\github\\swift-nio\\datagram_debug.log"
-    let formatter = ISO8601DateFormatter()
-    let timestamp = formatter.string(from: Date())
-    let fullMessage = "[\(timestamp)] \(message)\n"
-    let data = Data(fullMessage.utf8)
-    if FileManager.default.fileExists(atPath: path) {
-        if let handle = FileHandle(forWritingAtPath: path) {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            handle.closeFile()
-        }
-    } else {
-        _ = FileManager.default.createFile(atPath: path, contents: data, attributes: nil)
-    }
-}
 #endif
 
 class DatagramChannelTests: XCTestCase {
@@ -250,22 +232,10 @@ class DatagramChannelTests: XCTestCase {
         self.firstChannel = try! buildChannel(group: group)
         self.secondChannel = try! buildChannel(group: group)
         self.thirdChannel = try! buildChannel(group: group)
-#if os(Windows)
-        datagramDebugLog("setUp \(self.name)")
-        datagramDebugLog("firstChannel active: \(self.firstChannel.isActive)")
-        datagramDebugLog("secondChannel active: \(self.secondChannel.isActive)")
-        datagramDebugLog("thirdChannel active: \(self.thirdChannel.isActive)")
-#endif
     }
 
     override func tearDown() {
-#if os(Windows)
-        datagramDebugLog("tearDown \(self.name) - shutting down group")
-#endif
         XCTAssertNoThrow(try self.group.syncShutdownGracefully())
-#if os(Windows)
-        datagramDebugLog("tearDown \(self.name) - done")
-#endif
         super.tearDown()
     }
 
